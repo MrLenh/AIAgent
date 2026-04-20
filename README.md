@@ -164,6 +164,18 @@ Endpoints:
 `railpack.json` and `Procfile` are included so Railway/Heroku-style platforms
 can build and start the service out of the box.
 
+### Deploying to Railway
+
+1. Create a service from this repo.
+2. In the service's **Variables** tab, set at minimum:
+   - `LLM_PROVIDER` = `claude` (or `openai` / `gemini`)
+   - Matching key: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `GEMINI_API_KEY`
+3. (Optional) Add platform credentials only if you use them: `SHOPIFY_*`,
+   `WORDPRESS_*`, `WOOCOMMERCE_*`, `DATABASE_URL`.
+4. Railway injects `$PORT` automatically — the start command in `railpack.json`
+   already binds to it.
+5. Hit `/health` to verify `llm_configured: true`.
+
 ## Environment variables
 
 See `.env.example`. The module reads credentials from environment variables by
