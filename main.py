@@ -67,7 +67,7 @@ def _build_llm(override: LLMConfig | None = None, *, raise_errors: bool = False)
             )
         if provider == "gemini":
             return GeminiProvider(
-                api_key=api_key, model=model or os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+                api_key=api_key, model=model or os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
             )
         if provider == "claude" or (provider == "" and os.getenv("ANTHROPIC_API_KEY")):
             return ClaudeProvider(
