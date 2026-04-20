@@ -143,6 +143,22 @@ See `examples/`:
 - `optimize_shopify.py` — rewrite a Shopify product listing using Gemini.
 - `sql_to_seo.py` — pull live SQL data and turn it into an SEO article.
 
+## Admin UI
+
+A lightweight SPA (Tailwind + Alpine.js, no build step) is bundled in
+`static/` and served at `/`. It provides:
+
+- **Status** – live view of LLM + platform env config
+- **SEO Article** – form-driven article generation, one-click publish to WordPress
+- **Listing Optimizer** – fetch a Shopify/WooCommerce product by ID, rewrite,
+  push the result back
+- **Data Analysis** – upload a CSV, run a SQL query, or paste raw text, then ask
+  a natural-language question
+- **Settings** – per-browser overrides for LLM and platform credentials
+  (saved in `localStorage`, sent per-request)
+
+Open `http://localhost:8000/` after starting the service.
+
 ## Running as a service
 
 The module also ships with a FastAPI entrypoint (`main.py`) so it can be
@@ -154,12 +170,21 @@ LLM_PROVIDER=claude ANTHROPIC_API_KEY=sk-ant-... \
   uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
-Endpoints:
+Endpoints (under `/api`):
 
-- `GET /health` – liveness + LLM-config check
-- `POST /seo-article` – `{topic, primary_keyword, ...}`
-- `POST /optimize-listing` – `{current_title, current_description, ...}`
-- `POST /analyze` – `{question, sources:[{type:"csv",path:"..."}, ...]}`
+- `GET /api/status` – liveness + LLM/platform env check
+- `POST /api/seo-article` – `{topic, primary_keyword, ..., llm?}`
+- `POST /api/optimize-listing` – `{current_title, current_description, ..., llm?}`
+- `POST /api/analyze` – `{question, sources:[{type:"csv",path:"..."}, ...], llm?}`
+- `POST /api/analyze-upload` – multipart form with CSV file + question
+- `POST /api/shopify/product`, `/api/shopify/apply-listing`
+- `POST /api/woocommerce/product`, `/api/woocommerce/apply-listing`
+- `POST /api/wordpress/publish`
+- `POST /api/platforms/test` – validate credentials
+
+Every task endpoint accepts an optional `llm` object
+(`{provider, model, api_key}`) to override the server-side env for that single
+request. Interactive docs: `/api/docs`.
 
 `railpack.json` and `Procfile` are included so Railway/Heroku-style platforms
 can build and start the service out of the box.

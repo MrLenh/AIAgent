@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="vi" class="h-full">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Agent · Admin</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: {
+          bg: '#0b0d10',
+          panel: '#13161b',
+          panel2: '#1a1e24',
+          border: '#242932',
+          accent: '#6ee7b7',
+          accent2: '#60a5fa',
+          danger: '#f87171',
+          muted: '#8b94a3',
+        }
+      }
+    }
+  }
+</script>
+<link rel="stylesheet" href="/static/styles.css">
+<script defer src="https://unpkg.com/alpinejs@3.14.1/dist/cdn.min.js"></script>
+</head>
+<body class="bg-bg text-gray-100 min-h-full font-sans antialiased">
+
+<div x-data="agentApp()" x-init="init()" class="flex min-h-screen">
+
+  <!-- Sidebar -->
+  <aside class="w-64 bg-panel border-r border-border flex flex-col shrink-0">
+    <div class="p-5 border-b border-border">
+      <div class="flex items-center gap-2">
+        <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-accent to-accent2 flex items-center justify-center text-bg font-bold">A</div>
+        <div>
+          <div class="font-semibold text-white">AI Agent</div>
+          <div class="text-xs text-muted">Admin console</div>
+        </div>
+      </div>
+    </div>
+    <nav class="flex-1 p-3 space-y-1">
+      <template x-for="t in tabs" :key="t.id">
+        <button @click="tab = t.id"
+                :class="tab === t.id ? 'bg-panel2 text-white' : 'text-gray-400 hover:text-white hover:bg-panel2/60'"
+                class="w-full text-left px-3 py-2 rounded-lg text-sm flex items-center gap-2 transition">
+          <span x-text="t.icon"></span>
+          <span x-text="t.label"></span>
+        </button>
+      </template>
+    </nav>
+    <div class="p-3 border-t border-border text-xs text-muted">
+      <div class="flex items-center gap-2">
+        <span class="w-2 h-2 rounded-full" :class="status.llm_configured ? 'bg-accent' : 'bg-danger'"></span>
+        <span x-text="status.llm_configured ? 'LLM ready' : 'LLM not configured'"></span>
+      </div>
+      <div class="mt-1" x-text="status.env?.llm_provider || '(no provider)'"></div>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <main class="flex-1 p-8 overflow-y-auto">
+
+    <!-- Status tab -->
+    <section x-show="tab === 'status'" class="space-y-6">
+      <header>
+        <h1 class="text-2xl font-semibold text-white">Status</h1>
+        <p class="text-sm text-muted">Tình trạng kết nối của backend và credentials đã cấu hình.</p>
+      </header>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <template x-for="item in statusItems()" :key="item.key">
+          <div class="bg-panel border border-border rounded-xl p-4">
+            <div class="flex items-center justify-between">
+              <span class="text-sm text-muted" x-text="item.label"></span>
+              <span class="text-xs px-2 py-0.5 rounded-full"
+                    :class="item.ok ? 'bg-accent/10 text-accent' : 'bg-danger/10 text-danger'"
+                    x-text="item.ok ? 'connected' : 'missing'"></span>
+            </div>
+            <div class="mt-2 text-white font-medium" x-text="item.detail"></div>
+          </div>
+        </template>
+      </div>
+      <div class="bg-panel border border-border rounded-xl p-4 text-sm text-muted">
+        Credentials được đọc từ biến môi trường trên server. Hoặc bạn có thể
+        nhập trực tiếp ở tab <span class="text-white">Settings</span> — sẽ được lưu trong
+        trình duyệt và gửi kèm từng request.
+      </div>
+    </section>
+
+    <!-- SEO Article tab -->
+    <section x-show="tab === 'seo'" class="space-y-6 max-w-5xl">
+      <header class="flex items-center justify-between">
+        <div>
+          <h1 class="text-2xl font-semibold text-white">SEO Article</h1>
+          <p class="text-sm text-muted">Tạo bài viết chuẩn SEO, có thể grounding bằng text/CSV/SQL.</p>
+        </div>
+      </header>
+
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div class="bg-panel border border-border rounded-xl p-5 space-y-4">
+          <div>
+            <label class="label">Topic</label>
+            <input x-model="seo.topic" class="field" placeholder="Cách chọn máy pha cà phê pour-over 2026">
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="label">Primary keyword</label>
+              <input x-model="seo.primary_keyword" class="field" placeholder="máy pour over">
+            </div>
+            <div>
+              <label class="label">Secondary keywords (csv)</label>
+              <input x-model="seo.secondary_keywords_raw" class="field" placeholder="V60, Kalita, Chemex">
+            </div>
+          </div>
+          <div class="grid grid-cols-3 gap-3">
+            <div>
+              <label class="label">Audience</label>
+              <input x-model="seo.audience" class="field">
+            </div>
+            <div>
+              <label class="label">Word count</label>
+              <input type="number" x-model.number="seo.word_count" class="field">
+            </div>
+            <div>
+              <label class="label">Tone</label>
+              <input x-model="seo.tone" class="field">
+            </div>
+          </div>
+          <div>
+            <label class="label">Reference data (optional)</label>
+            <textarea x-model="seo.reference" rows="4" class="field" placeholder="Ghi chú, số liệu, brief..."></textarea>
+          </div>
+          <button @click="runSEO()" :disabled="seo.loading" class="btn-primary">
+            <span x-show="!seo.loading">Generate article</span>
+            <span x-show="seo.loading">Generating...</span>
+          </button>
+        </div>
+
+        <div class="bg-panel border border-border rounded-xl p-5 space-y-3 min-h-[300px]">
+          <div class="flex items-center justify-between">
+            <h3 class="font-medium text-white">Result</h3>
+            <button x-show="seo.result" @click="copyToClipboard(seo.result.body)" class="btn-ghost text-xs">Copy body</button>
+          </div>
+          <template x-if="seo.error">
+            <div class="text-danger text-sm" x-text="seo.error"></div>
+          </template>
+          <template x-if="seo.result">
+            <div class="space-y-3 text-sm">
+              <div>
+                <div class="label">Title</div>
+                <div class="text-white font-medium" x-text="seo.result.title"></div>
+              </div>
+              <div>
+                <div class="label">Meta description</div>
+                <div x-text="seo.result.meta_description"></div>
+              </div>
+              <div class="flex gap-3">
+                <div class="flex-1">
+                  <div class="label">Slug</div>
+                  <div class="text-accent" x-text="seo.result.slug"></div>
+                </div>
+                <div class="flex-1">
+                  <div class="label">Keywords</div>
+                  <div x-text="(seo.result.keywords || []).join(', ')"></div>
+                </div>
+              </div>
+              <details class="border border-border rounded-lg">
+                <summary class="px-3 py-2 text-sm cursor-pointer text-muted">Full body</summary>
+                <pre class="p-3 text-xs whitespace-pre-wrap text-gray-300" x-text="seo.result.body"></pre>
+              </details>
+              <div class="pt-3 border-t border-border">
+                <div class="label mb-2">Publish to WordPress</div>
+                <div class="flex gap-2">
+                  <select x-model="seo.publish_status" class="field flex-none w-32">
+                    <option value="draft">Draft</option>
+                    <option value="publish">Publish</option>
+                  </select>
+                  <button @click="publishToWP()" :disabled="seo.publishing" class="btn-secondary flex-1">
+                    <span x-show="!seo.publishing">Push to WordPress</span>
+                    <span x-show="seo.publishing">Publishing...</span>
+                  </button>
+                </div>
+                <div x-show="seo.publishResult" class="mt-2 text-xs text-accent" x-text="seo.publishResult"></div>
+              </div>
+            </div>
+          </template>
+          <template x-if="!seo.result && !seo.error && !seo.loading">
+            <div class="text-muted text-sm">Điền form và bấm Generate.</div>
+          </template>
+        </div>
+      </div>
+    </section>
+
+    <!-- Listing tab -->
+    <section x-show="tab === 'listing'" class="space-y-6 max-w-5xl">
+      <header>
+        <h1 class="text-2xl font-semibold text-white">Listing Optimizer</h1>
+        <p class="text-sm text-muted">Tối ưu title/description sản phẩm Shopify / WooCommerce.</p>
+      </header>
+
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div class="bg-panel border border-border rounded-xl p-5 space-y-4">
+          <div class="flex items-center gap-2">
+            <select x-model="listing.platform" class="field flex-none w-40">
+              <option value="manual">Manual input</option>
+              <option value="shopify">Fetch Shopify</option>
+              <option value="woocommerce">Fetch WooCommerce</option>
+            </select>
+            <input x-show="listing.platform !== 'manual'" x-model.number="listing.product_id" type="number" class="field" placeholder="Product ID">
+            <button x-show="listing.platform !== 'manual'" @click="fetchProduct()" :disabled="listing.fetching" class="btn-secondary">
+              <span x-show="!listing.fetching">Fetch</span>
+              <span x-show="listing.fetching">...</span>
+            </button>
+          </div>
+          <div>
+            <label class="label">Current title</label>
+            <input x-model="listing.current_title" class="field">
+          </div>
+          <div>
+            <label class="label">Current description</label>
+            <textarea x-model="listing.current_description" rows="4" class="field"></textarea>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="label">Primary keyword</label>
+              <input x-model="listing.primary_keyword" class="field">
+            </div>
+            <div>
+              <label class="label">Audience</label>
+              <input x-model="listing.target_audience" class="field">
+            </div>
+          </div>
+          <div>
+            <label class="label">Attributes (key: value, mỗi dòng)</label>
+            <textarea x-model="listing.attributes_raw" rows="3" class="field" placeholder="weight: 100g&#10;origin: Thái Nguyên"></textarea>
+          </div>
+          <button @click="runListing()" :disabled="listing.loading" class="btn-primary">
+            <span x-show="!listing.loading">Optimize</span>
+            <span x-show="listing.loading">Optimizing...</span>
+          </button>
+        </div>
+
+        <div class="bg-panel border border-border rounded-xl p-5 space-y-3 min-h-[300px]">
+          <h3 class="font-medium text-white">Optimized listing</h3>
+          <template x-if="listing.error">
+            <div class="text-danger text-sm" x-text="listing.error"></div>
+          </template>
+          <template x-if="listing.result">
+            <div class="space-y-3 text-sm">
+              <div><div class="label">Title</div><div class="text-white font-medium" x-text="listing.result.title"></div></div>
+              <div class="flex gap-3">
+                <div class="flex-1"><div class="label">Meta title</div><div x-text="listing.result.meta_title"></div></div>
+              </div>
+              <div><div class="label">Meta description</div><div x-text="listing.result.meta_description"></div></div>
+              <div><div class="label">Short description</div><div x-text="listing.result.short_description"></div></div>
+              <div><div class="label">Bullets</div>
+                <ul class="list-disc pl-5 text-gray-300">
+                  <template x-for="b in listing.result.bullet_points"><li x-text="b"></li></template>
+                </ul>
+              </div>
+              <div><div class="label">Tags</div><div class="flex flex-wrap gap-1">
+                <template x-for="t in listing.result.tags">
+                  <span class="px-2 py-0.5 bg-panel2 border border-border rounded text-xs" x-text="t"></span>
+                </template>
+              </div></div>
+              <details class="border border-border rounded-lg">
+                <summary class="px-3 py-2 text-sm cursor-pointer text-muted">Description HTML</summary>
+                <pre class="p-3 text-xs whitespace-pre-wrap text-gray-300" x-text="listing.result.description_html"></pre>
+              </details>
+              <div class="pt-3 border-t border-border">
+                <button @click="applyListing()" :disabled="listing.applying || listing.platform === 'manual' || !listing.product_id" class="btn-secondary w-full">
+                  <span x-show="!listing.applying" x-text="`Apply to ${listing.platform}`"></span>
+                  <span x-show="listing.applying">Applying...</span>
+                </button>
+                <div x-show="listing.applyResult" class="mt-2 text-xs text-accent" x-text="listing.applyResult"></div>
+              </div>
+            </div>
+          </template>
+          <template x-if="!listing.result && !listing.error && !listing.loading">
+            <div class="text-muted text-sm">Nhập hoặc fetch sản phẩm, rồi Optimize.</div>
+          </template>
+        </div>
+      </div>
+    </section>
+
+    <!-- Analysis tab -->
+    <section x-show="tab === 'analyze'" class="space-y-6 max-w-5xl">
+      <header>
+        <h1 class="text-2xl font-semibold text-white">Data Analysis</h1>
+        <p class="text-sm text-muted">Hỏi câu hỏi tự nhiên về CSV hoặc truy vấn SQL.</p>
+      </header>
+
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div class="bg-panel border border-border rounded-xl p-5 space-y-4">
+          <div class="flex gap-2">
+            <button @click="analyze.mode = 'upload'" :class="analyze.mode === 'upload' ? 'bg-panel2 text-white' : 'text-muted'" class="btn-tab">Upload CSV</button>
+            <button @click="analyze.mode = 'sql'" :class="analyze.mode === 'sql' ? 'bg-panel2 text-white' : 'text-muted'" class="btn-tab">SQL query</button>
+            <button @click="analyze.mode = 'text'" :class="analyze.mode === 'text' ? 'bg-panel2 text-white' : 'text-muted'" class="btn-tab">Raw text</button>
+          </div>
+
+          <div x-show="analyze.mode === 'upload'">
+            <label class="label">CSV file</label>
+            <input type="file" accept=".csv" @change="analyze.file = $event.target.files[0]" class="field cursor-pointer">
+          </div>
+          <div x-show="analyze.mode === 'sql'" class="space-y-3">
+            <div><label class="label">Database URL</label><input x-model="analyze.db_url" class="field" placeholder="postgresql://user:pass@host/db"></div>
+            <div><label class="label">SQL query</label><textarea x-model="analyze.sql" rows="4" class="field font-mono text-xs" placeholder="SELECT ..."></textarea></div>
+          </div>
+          <div x-show="analyze.mode === 'text'">
+            <label class="label">Data</label>
+            <textarea x-model="analyze.text" rows="6" class="field font-mono text-xs" placeholder="Dán bất kỳ dữ liệu text/markdown/json..."></textarea>
+          </div>
+
+          <div>
+            <label class="label">Question</label>
+            <textarea x-model="analyze.question" rows="2" class="field" placeholder="Sản phẩm nào bán chậm nhất quý vừa rồi?"></textarea>
+          </div>
+          <button @click="runAnalyze()" :disabled="analyze.loading" class="btn-primary">
+            <span x-show="!analyze.loading">Analyze</span>
+            <span x-show="analyze.loading">Analyzing...</span>
+          </button>
+        </div>
+
+        <div class="bg-panel border border-border rounded-xl p-5 min-h-[300px]">
+          <h3 class="font-medium text-white mb-3">Report</h3>
+          <template x-if="analyze.error"><div class="text-danger text-sm" x-text="analyze.error"></div></template>
+          <template x-if="analyze.result">
+            <pre class="text-sm whitespace-pre-wrap text-gray-300" x-text="analyze.result"></pre>
+          </template>
+          <template x-if="!analyze.result && !analyze.error && !analyze.loading">
+            <div class="text-muted text-sm">Chọn nguồn dữ liệu và đặt câu hỏi.</div>
+          </template>
+        </div>
+      </div>
+    </section>
+
+    <!-- Settings tab -->
+    <section x-show="tab === 'settings'" class="space-y-6 max-w-3xl">
+      <header>
+        <h1 class="text-2xl font-semibold text-white">Settings</h1>
+        <p class="text-sm text-muted">Lưu trong trình duyệt — gửi kèm mỗi request, không đụng env vars của server.</p>
+      </header>
+
+      <div class="bg-panel border border-border rounded-xl p-5 space-y-4">
+        <h3 class="font-medium text-white">LLM override</h3>
+        <div class="grid grid-cols-3 gap-3">
+          <div>
+            <label class="label">Provider</label>
+            <select x-model="settings.llm.provider" class="field">
+              <option value="">(use server env)</option>
+              <option value="claude">Claude</option>
+              <option value="openai">OpenAI</option>
+              <option value="gemini">Gemini</option>
+            </select>
+          </div>
+          <div><label class="label">Model</label><input x-model="settings.llm.model" class="field" placeholder="auto"></div>
+          <div><label class="label">API key</label><input x-model="settings.llm.api_key" type="password" class="field" placeholder="sk-..."></div>
+        </div>
+      </div>
+
+      <div class="bg-panel border border-border rounded-xl p-5 space-y-4">
+        <div class="flex items-center justify-between">
+          <h3 class="font-medium text-white">Shopify</h3>
+          <button @click="testPlatform('shopify')" class="btn-ghost text-xs">Test</button>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="label">Shop</label><input x-model="settings.shopify.shop" class="field" placeholder="my-store.myshopify.com"></div>
+          <div><label class="label">Access token</label><input x-model="settings.shopify.access_token" type="password" class="field" placeholder="shpat_..."></div>
+        </div>
+        <div x-show="settings.testResult.shopify" class="text-xs" :class="settings.testResult.shopify?.ok ? 'text-accent' : 'text-danger'" x-text="settings.testResult.shopify?.ok ? 'Connected' : settings.testResult.shopify?.error"></div>
+      </div>
+
+      <div class="bg-panel border border-border rounded-xl p-5 space-y-4">
+        <div class="flex items-center justify-between">
+          <h3 class="font-medium text-white">WordPress</h3>
+          <button @click="testPlatform('wordpress')" class="btn-ghost text-xs">Test</button>
+        </div>
+        <div class="grid grid-cols-3 gap-3">
+          <div><label class="label">Base URL</label><input x-model="settings.wordpress.base_url" class="field" placeholder="https://blog.com"></div>
+          <div><label class="label">Username</label><input x-model="settings.wordpress.username" class="field"></div>
+          <div><label class="label">App password</label><input x-model="settings.wordpress.app_password" type="password" class="field"></div>
+        </div>
+        <div x-show="settings.testResult.wordpress" class="text-xs" :class="settings.testResult.wordpress?.ok ? 'text-accent' : 'text-danger'" x-text="settings.testResult.wordpress?.ok ? 'Connected' : settings.testResult.wordpress?.error"></div>
+      </div>
+
+      <div class="bg-panel border border-border rounded-xl p-5 space-y-4">
+        <div class="flex items-center justify-between">
+          <h3 class="font-medium text-white">WooCommerce</h3>
+          <button @click="testPlatform('woocommerce')" class="btn-ghost text-xs">Test</button>
+        </div>
+        <div class="grid grid-cols-3 gap-3">
+          <div><label class="label">Base URL</label><input x-model="settings.woocommerce.base_url" class="field" placeholder="https://shop.com"></div>
+          <div><label class="label">Consumer key</label><input x-model="settings.woocommerce.consumer_key" type="password" class="field"></div>
+          <div><label class="label">Consumer secret</label><input x-model="settings.woocommerce.consumer_secret" type="password" class="field"></div>
+        </div>
+        <div x-show="settings.testResult.woocommerce" class="text-xs" :class="settings.testResult.woocommerce?.ok ? 'text-accent' : 'text-danger'" x-text="settings.testResult.woocommerce?.ok ? 'Connected' : settings.testResult.woocommerce?.error"></div>
+      </div>
+
+      <div class="flex gap-2">
+        <button @click="saveSettings()" class="btn-primary">Save to browser</button>
+        <button @click="clearSettings()" class="btn-ghost">Clear</button>
+        <span x-show="settings.saved" class="text-xs text-accent self-center">Saved</span>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
