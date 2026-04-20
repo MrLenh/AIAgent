@@ -344,7 +344,13 @@
       </header>
 
       <div class="bg-panel border border-border rounded-xl p-5 space-y-4">
-        <h3 class="font-medium text-white">LLM override</h3>
+        <div class="flex items-center justify-between">
+          <h3 class="font-medium text-white">LLM override</h3>
+          <button @click="testLLM()" :disabled="settings.testingLLM" class="btn-ghost text-xs">
+            <span x-show="!settings.testingLLM">Test LLM</span>
+            <span x-show="settings.testingLLM">Testing...</span>
+          </button>
+        </div>
         <div class="grid grid-cols-3 gap-3">
           <div>
             <label class="label">Provider</label>
@@ -358,6 +364,9 @@
           <div><label class="label">Model</label><input x-model="settings.llm.model" class="field" placeholder="auto"></div>
           <div><label class="label">API key</label><input x-model="settings.llm.api_key" type="password" class="field" placeholder="sk-..."></div>
         </div>
+        <div x-show="settings.testResult.llm" class="text-xs break-all"
+             :class="settings.testResult.llm?.ok ? 'text-accent' : 'text-danger'"
+             x-text="settings.testResult.llm?.ok ? `OK · ${settings.testResult.llm.provider} / ${settings.testResult.llm.model} → ${settings.testResult.llm.text}` : settings.testResult.llm?.error"></div>
       </div>
 
       <div class="bg-panel border border-border rounded-xl p-5 space-y-4">

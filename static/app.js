@@ -41,6 +41,7 @@ function agentApp() {
       wordpress: { base_url: '', username: '', app_password: '' },
       woocommerce: { base_url: '', consumer_key: '', consumer_secret: '' },
       testResult: {},
+      testingLLM: false,
       saved: false,
     },
 
@@ -251,6 +252,18 @@ function agentApp() {
         testResult: {}, saved: false,
       };
     },
+    async testLLM() {
+      this.settings.testingLLM = true;
+      try {
+        const r = await this.postJSON('/api/llm-test', { llm: this.llmPayload() });
+        this.settings.testResult = { ...this.settings.testResult, llm: r };
+      } catch (e) {
+        this.settings.testResult = { ...this.settings.testResult, llm: { ok: false, error: e.message } };
+      } finally {
+        this.settings.testingLLM = false;
+      }
+    },
+
     async testPlatform(platform) {
       const creds = this.settings[platform];
       try {

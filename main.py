@@ -12,12 +12,14 @@ from __future__ import annotations
 
 import csv
 import io
+import logging
 import os
+import traceback
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -38,6 +40,9 @@ from ai_agent.tasks.listing import OptimizedListing
 BASE_DIR = Path(__file__).parent
 STATIC_DIR = BASE_DIR / "static"
 
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+logger = logging.getLogger("ai_agent")
+
 
 # ---------------------------------------------------------------------------
 # LLM + source builders
@@ -50,7 +55,7 @@ class LLMConfig(BaseModel):
     api_key: str | None = None
 
 
-def _build_llm(override: LLMConfig | None = None) -> LLMProvider | None:
+def _build_llm(override: LLMConfig | None = None, *, raise_errors: bool = False) -> LLMProvider | None:
     provider = (override.provider if override and override.provider else os.getenv("LLM_PROVIDER", "")).lower()
     model = override.model if override and override.model else None
     api_key = override.api_key if override and override.api_key else None
@@ -62,19 +67,25 @@ def _build_llm(override: LLMConfig | None = None) -> LLMProvider | None:
             )
         if provider == "gemini":
             return GeminiProvider(
-                api_key=api_key, model=model or os.getenv("GEMINI_MODEL", "gemini-1.5-pro")
+                api_key=api_key, model=model or os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
             )
         if provider == "claude" or (provider == "" and os.getenv("ANTHROPIC_API_KEY")):
             return ClaudeProvider(
                 api_key=api_key, model=model or os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6")
             )
-    except ValueError:
+    except Exception as exc:
+        logger.exception("LLM init failed for provider=%s", provider)
+        if raise_errors:
+            raise HTTPException(
+                status_code=503,
+                detail=f"LLM init failed ({provider}): {type(exc).__name__}: {exc}",
+            )
         return None
     return None
 
 
 def _require_agent(override: LLMConfig | None = None) -> AIAgent:
-    llm = _build_llm(override)
+    llm = _build_llm(override, raise_errors=True)
     if llm is None:
         raise HTTPException(
             status_code=503,
@@ -111,6 +122,17 @@ def _build_sources(specs: list[dict[str, Any]] | None):
 
 app = FastAPI(title="AI Agent", version="0.1.0", docs_url="/api/docs", openapi_url="/api/openapi.json")
 
+
+@app.exception_handler(Exception)
+async def unhandled_exception(request: Request, exc: Exception):
+    tb = traceback.format_exc()
+    logger.error("Unhandled %s at %s\n%s", type(exc).__name__, request.url.path, tb)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"{type(exc).__name__}: {exc}"},
+    )
+
+
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
@@ -126,6 +148,26 @@ def index():
 # ---------------------------------------------------------------------------
 # Status
 # ---------------------------------------------------------------------------
+
+
+class LLMTestRequest(BaseModel):
+    llm: LLMConfig | None = None
+
+
+@app.post("/api/llm-test")
+def llm_test(req: LLMTestRequest) -> dict:
+    """Send a trivial prompt to verify the LLM works end-to-end."""
+    llm = _build_llm(req.llm, raise_errors=True)
+    if llm is None:
+        raise HTTPException(status_code=503, detail="No LLM provider configured")
+    resp = llm.prompt("Reply with the single word: OK", max_tokens=20, temperature=0)
+    return {
+        "ok": True,
+        "provider": llm.name,
+        "model": getattr(llm, "model", ""),
+        "text": resp.text.strip()[:100],
+        "usage": resp.usage,
+    }
 
 
 @app.get("/api/status")

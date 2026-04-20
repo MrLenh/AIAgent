@@ -47,7 +47,21 @@ class GeminiProvider(LLMProvider):
             },
         )
         resp = model.generate_content(gemini_messages, **kwargs)
-        text = resp.text or ""
+
+        # Surface safety blocks and empty candidates as explicit errors instead
+        # of crashing on resp.text access.
+        try:
+            text = resp.text or ""
+        except Exception as exc:
+            feedback = getattr(resp, "prompt_feedback", None)
+            finish = ""
+            if getattr(resp, "candidates", None):
+                finish = getattr(resp.candidates[0], "finish_reason", "")
+            raise RuntimeError(
+                f"Gemini returned no text (finish_reason={finish}, "
+                f"prompt_feedback={feedback}): {exc}"
+            ) from exc
+
         usage = {}
         if getattr(resp, "usage_metadata", None):
             usage = {
