@@ -1,0 +1,57 @@
+import os
+
+from ai_agent.llm.base import LLMMessage, LLMProvider, LLMResponse
+
+
+class GeminiProvider(LLMProvider):
+    name = "gemini"
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        model: str = "gemini-1.5-pro",
+    ):
+        import google.generativeai as genai
+
+        key = api_key or os.getenv("GEMINI_API_KEY")
+        if not key:
+            raise ValueError("GEMINI_API_KEY is required")
+        genai.configure(api_key=key)
+        self._genai = genai
+        self.model = model
+
+    def complete(
+        self,
+        messages: list[LLMMessage],
+        *,
+        temperature: float = 0.7,
+        max_tokens: int = 2048,
+        **kwargs,
+    ) -> LLMResponse:
+        system_instruction = "\n".join(m.content for m in messages if m.role == "system") or None
+        gemini_messages = [
+            {
+                "role": "user" if m.role == "user" else "model",
+                "parts": [m.content],
+            }
+            for m in messages
+            if m.role != "system"
+        ]
+
+        model = self._genai.GenerativeModel(
+            model_name=self.model,
+            system_instruction=system_instruction,
+            generation_config={
+                "temperature": temperature,
+                "max_output_tokens": max_tokens,
+            },
+        )
+        resp = model.generate_content(gemini_messages, **kwargs)
+        text = resp.text or ""
+        usage = {}
+        if getattr(resp, "usage_metadata", None):
+            usage = {
+                "input_tokens": resp.usage_metadata.prompt_token_count,
+                "output_tokens": resp.usage_metadata.candidates_token_count,
+            }
+        return LLMResponse(text=text, model=self.model, usage=usage, raw=resp)
