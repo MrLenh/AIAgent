@@ -67,7 +67,7 @@ def _build_llm(override: LLMConfig | None = None, *, raise_errors: bool = False)
             )
         if provider == "gemini":
             return GeminiProvider(
-                api_key=api_key, model=model or os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+                api_key=api_key, model=model or os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
             )
         if provider == "claude" or (provider == "" and os.getenv("ANTHROPIC_API_KEY")):
             return ClaudeProvider(
@@ -152,6 +152,31 @@ def index():
 
 class LLMTestRequest(BaseModel):
     llm: LLMConfig | None = None
+
+
+class GeminiListReq(BaseModel):
+    api_key: str | None = None
+
+
+@app.post("/api/gemini/models")
+def gemini_models(req: GeminiListReq) -> dict:
+    """List Gemini models that support generateContent for the given key."""
+    import google.generativeai as genai
+
+    key = req.api_key or os.getenv("GEMINI_API_KEY")
+    if not key:
+        raise HTTPException(status_code=400, detail="GEMINI_API_KEY not set and no api_key provided")
+    genai.configure(api_key=key)
+    models = []
+    for m in genai.list_models():
+        if "generateContent" in getattr(m, "supported_generation_methods", []):
+            models.append({
+                "name": m.name.replace("models/", ""),
+                "display_name": getattr(m, "display_name", ""),
+                "input_token_limit": getattr(m, "input_token_limit", 0),
+                "output_token_limit": getattr(m, "output_token_limit", 0),
+            })
+    return {"models": models}
 
 
 @app.post("/api/llm-test")

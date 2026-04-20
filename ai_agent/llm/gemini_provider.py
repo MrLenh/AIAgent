@@ -9,7 +9,7 @@ class GeminiProvider(LLMProvider):
     def __init__(
         self,
         api_key: str | None = None,
-        model: str = "gemini-1.5-pro",
+        model: str = "gemini-2.0-flash",
     ):
         import google.generativeai as genai
 

@@ -346,10 +346,13 @@
       <div class="bg-panel border border-border rounded-xl p-5 space-y-4">
         <div class="flex items-center justify-between">
           <h3 class="font-medium text-white">LLM override</h3>
-          <button @click="testLLM()" :disabled="settings.testingLLM" class="btn-ghost text-xs">
-            <span x-show="!settings.testingLLM">Test LLM</span>
-            <span x-show="settings.testingLLM">Testing...</span>
-          </button>
+          <div class="flex gap-2">
+            <button x-show="settings.llm.provider === 'gemini'" @click="listGeminiModels()" class="btn-ghost text-xs">List models</button>
+            <button @click="testLLM()" :disabled="settings.testingLLM" class="btn-ghost text-xs">
+              <span x-show="!settings.testingLLM">Test LLM</span>
+              <span x-show="settings.testingLLM">Testing...</span>
+            </button>
+          </div>
         </div>
         <div class="grid grid-cols-3 gap-3">
           <div>
@@ -361,7 +364,15 @@
               <option value="gemini">Gemini</option>
             </select>
           </div>
-          <div><label class="label">Model</label><input x-model="settings.llm.model" class="field" placeholder="auto"></div>
+          <div>
+            <label class="label">Model</label>
+            <input x-model="settings.llm.model" class="field" placeholder="auto" list="gemini-models-list">
+            <datalist id="gemini-models-list">
+              <template x-for="m in settings.geminiModels" :key="m.name">
+                <option :value="m.name" x-text="m.display_name"></option>
+              </template>
+            </datalist>
+          </div>
           <div><label class="label">API key</label><input x-model="settings.llm.api_key" type="password" class="field" placeholder="sk-..."></div>
         </div>
         <div x-show="settings.testResult.llm" class="text-xs break-all"

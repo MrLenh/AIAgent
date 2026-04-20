@@ -42,6 +42,7 @@ function agentApp() {
       woocommerce: { base_url: '', consumer_key: '', consumer_secret: '' },
       testResult: {},
       testingLLM: false,
+      geminiModels: [],
       saved: false,
     },
 
@@ -252,6 +253,16 @@ function agentApp() {
         testResult: {}, saved: false,
       };
     },
+    async listGeminiModels() {
+      try {
+        const r = await this.postJSON('/api/gemini/models', { api_key: this.settings.llm.api_key || null });
+        this.settings.geminiModels = r.models || [];
+        this.settings.testResult = { ...this.settings.testResult, llm: { ok: true, provider: 'gemini', model: `${r.models.length} models`, text: r.models.slice(0, 5).map(m => m.name).join(', ') } };
+      } catch (e) {
+        this.settings.testResult = { ...this.settings.testResult, llm: { ok: false, error: e.message } };
+      }
+    },
+
     async testLLM() {
       this.settings.testingLLM = true;
       try {
