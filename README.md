@@ -143,6 +143,27 @@ See `examples/`:
 - `optimize_shopify.py` — rewrite a Shopify product listing using Gemini.
 - `sql_to_seo.py` — pull live SQL data and turn it into an SEO article.
 
+## Running as a service
+
+The module also ships with a FastAPI entrypoint (`main.py`) so it can be
+deployed directly to Railway/Fly/Render. Select the LLM with the
+`LLM_PROVIDER` env var (`claude` | `openai` | `gemini`).
+
+```bash
+LLM_PROVIDER=claude ANTHROPIC_API_KEY=sk-ant-... \
+  uvicorn main:app --host 0.0.0.0 --port 8000
+```
+
+Endpoints:
+
+- `GET /health` – liveness + LLM-config check
+- `POST /seo-article` – `{topic, primary_keyword, ...}`
+- `POST /optimize-listing` – `{current_title, current_description, ...}`
+- `POST /analyze` – `{question, sources:[{type:"csv",path:"..."}, ...]}`
+
+`railpack.json` and `Procfile` are included so Railway/Heroku-style platforms
+can build and start the service out of the box.
+
 ## Environment variables
 
 See `.env.example`. The module reads credentials from environment variables by
