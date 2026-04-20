@@ -185,7 +185,8 @@ def llm_test(req: LLMTestRequest) -> dict:
     llm = _build_llm(req.llm, raise_errors=True)
     if llm is None:
         raise HTTPException(status_code=503, detail="No LLM provider configured")
-    resp = llm.prompt("Reply with the single word: OK", max_tokens=20, temperature=0)
+    # 1024 tokens covers Gemini 2.5 thinking overhead + short reply.
+    resp = llm.prompt("Reply with the single word: OK", max_tokens=1024, temperature=0)
     return {
         "ok": True,
         "provider": llm.name,

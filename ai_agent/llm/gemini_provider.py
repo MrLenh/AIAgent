@@ -57,9 +57,18 @@ class GeminiProvider(LLMProvider):
             finish = ""
             if getattr(resp, "candidates", None):
                 finish = getattr(resp.candidates[0], "finish_reason", "")
+            hint = ""
+            # finish_reason 2 == MAX_TOKENS. Gemini 2.5 "thinking" models burn
+            # tokens internally; bumping max_tokens usually fixes this.
+            if str(finish) in ("2", "MAX_TOKENS", "FinishReason.MAX_TOKENS"):
+                hint = (
+                    " Hint: MAX_TOKENS — Gemini 2.5 thinking models consume "
+                    "tokens internally. Increase max_tokens or switch to "
+                    "gemini-2.5-flash-lite (no thinking)."
+                )
             raise RuntimeError(
                 f"Gemini returned no text (finish_reason={finish}, "
-                f"prompt_feedback={feedback}): {exc}"
+                f"prompt_feedback={feedback}).{hint} Underlying: {exc}"
             ) from exc
 
         usage = {}
