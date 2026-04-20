@@ -27,6 +27,7 @@ from ai_agent import (
     AIAgent,
     ClaudeProvider,
     GeminiProvider,
+    HistoryStore,
     OpenAIProvider,
     ShopifyClient,
     WooCommerceClient,
@@ -35,6 +36,9 @@ from ai_agent import (
 from ai_agent.data_sources import CSVSource, DatabaseSource, TextSource
 from ai_agent.llm.base import LLMProvider
 from ai_agent.tasks.listing import OptimizedListing
+
+
+history_store = HistoryStore()
 
 
 BASE_DIR = Path(__file__).parent
@@ -228,6 +232,18 @@ def health() -> dict:
 # ---------------------------------------------------------------------------
 
 
+class PublishSpec(BaseModel):
+    platform: str  # "wordpress" | "shopify"
+    status: str = "draft"
+    creds: dict[str, Any] | None = None  # override env
+
+
+class InternalLinkSpec(BaseModel):
+    source: str = "none"  # "wordpress" | "shopify" | "history" | "none"
+    creds: dict[str, Any] | None = None
+    limit: int = 5
+
+
 class SEORequest(BaseModel):
     topic: str
     primary_keyword: str
@@ -236,14 +252,88 @@ class SEORequest(BaseModel):
     word_count: int = 1200
     tone: str = "informative and friendly"
     sources: list[dict[str, Any]] = Field(default_factory=list)
+
+    internal_links: InternalLinkSpec | None = None
+    external_links: list[str] = Field(default_factory=list)
+    check_duplicates: bool = True
+
+    publish: PublishSpec | None = None
+    save_history: bool = True
+
     llm: LLMConfig | None = None
+
+
+def _fetch_related(spec: InternalLinkSpec, keyword: str) -> list[dict]:
+    if not spec or spec.source == "none":
+        return []
+    try:
+        if spec.source == "wordpress":
+            creds = spec.creds or {
+                "base_url": os.getenv("WORDPRESS_URL", ""),
+                "username": os.getenv("WORDPRESS_USERNAME", ""),
+                "app_password": os.getenv("WORDPRESS_APP_PASSWORD", ""),
+            }
+            return WordPressClient(**creds).search_posts(keyword, per_page=spec.limit)
+        if spec.source == "shopify":
+            creds = spec.creds or {
+                "shop": os.getenv("SHOPIFY_SHOP", ""),
+                "access_token": os.getenv("SHOPIFY_ACCESS_TOKEN", ""),
+            }
+            return ShopifyClient(**creds).search_articles(keyword, limit=spec.limit)
+        if spec.source == "history":
+            rows = history_store.find_similar(keyword, limit=spec.limit)
+            return [
+                {
+                    "title": r["title"],
+                    "url": f"/history/{r['id']}",
+                    "excerpt": r["meta_description"],
+                }
+                for r in rows
+            ]
+    except Exception as exc:
+        logger.warning("Related lookup failed (%s): %s", spec.source, exc)
+    return []
+
+
+def _auto_publish(article, publish: PublishSpec) -> dict:
+    if publish.platform in ("wordpress", "wp"):
+        creds = publish.creds or {
+            "base_url": os.getenv("WORDPRESS_URL", ""),
+            "username": os.getenv("WORDPRESS_USERNAME", ""),
+            "app_password": os.getenv("WORDPRESS_APP_PASSWORD", ""),
+        }
+        post = WordPressClient(**creds).create_post(
+            title=article.title,
+            content=article.body_html,
+            excerpt=article.meta_description,
+            status=publish.status,
+        )
+        return {
+            "platform": "wordpress",
+            "id": post.get("id"),
+            "url": post.get("link"),
+            "status": post.get("status"),
+        }
+    raise HTTPException(400, f"Unsupported publish platform: {publish.platform}")
 
 
 @app.post("/api/seo-article")
 def seo_article(req: SEORequest) -> dict:
     agent = _require_agent(req.llm)
+    llm = agent.llm
+
+    # 1. Look for related articles to link to (and to flag duplicates).
+    related = _fetch_related(req.internal_links, req.primary_keyword) if req.internal_links else []
+    duplicates: list[dict] = []
+    if req.check_duplicates and related:
+        key = req.primary_keyword.lower().strip()
+        duplicates = [r for r in related if key and key in (r.get("title") or "").lower()]
+
+    # 2. Grounding sources.
     for idx, src in enumerate(_build_sources(req.sources)):
         agent.register_source(src, name=f"src_{idx}")
+
+    # 3. Generate.
     article = agent.write_seo_article(
         topic=req.topic,
         primary_keyword=req.primary_keyword,
@@ -251,13 +341,46 @@ def seo_article(req: SEORequest) -> dict:
         audience=req.audience,
         word_count=req.word_count,
         tone=req.tone,
+        related_articles=related,
+        external_references=req.external_links,
     )
+
+    # 4. Persist history.
+    history_id = None
+    if req.save_history:
+        history_id = history_store.save(
+            topic=req.topic,
+            title=article.title,
+            slug=article.slug,
+            primary_keyword=req.primary_keyword,
+            keywords=article.keywords,
+            meta_description=article.meta_description,
+            body_html=article.body_html,
+            body_raw=article.raw,
+            llm_provider=llm.name,
+            llm_model=getattr(llm, "model", ""),
+            related_seen=[{"title": r["title"], "url": r["url"]} for r in related],
+            external_links=list(req.external_links),
+        )
+
+    # 5. Optional auto-publish.
+    published = None
+    if req.publish:
+        published = _auto_publish(article, req.publish)
+        if history_id:
+            history_store.add_publication(history_id, published)
+
     return {
-        "title": article.title(),
+        "history_id": history_id,
+        "title": article.title,
         "slug": article.slug,
         "meta_description": article.meta_description,
         "keywords": article.keywords,
-        "body": article.raw,
+        "body_html": article.body_html,
+        "raw": article.raw,
+        "related": related,
+        "duplicates": duplicates,
+        "published": published,
     }
 
 
@@ -334,6 +457,61 @@ async def analyze_upload(
     agent.register_source(TextSource(content=f"CSV upload '{file.filename}':\n{preview}"), name="upload")
     report = agent.analyze(question)
     return {"report": report, "rows": len(rows) - 1, "columns": rows[0]}
+
+
+# ---------------------------------------------------------------------------
+# History
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/history")
+def history_list(limit: int = 100) -> dict:
+    rows = history_store.list(limit=limit)
+    # Strip heavy body fields from the list view.
+    return {
+        "items": [
+            {k: v for k, v in r.items() if k not in ("body_html", "body_raw")}
+            for r in rows
+        ]
+    }
+
+
+@app.get("/api/history/{article_id}")
+def history_get(article_id: str) -> dict:
+    row = history_store.get(article_id)
+    if not row:
+        raise HTTPException(404, "Not found")
+    return row
+
+
+@app.delete("/api/history/{article_id}")
+def history_delete(article_id: str) -> dict:
+    ok = history_store.delete(article_id)
+    if not ok:
+        raise HTTPException(404, "Not found")
+    return {"ok": True}
+
+
+class HistoryPublishReq(BaseModel):
+    platform: str
+    status: str = "draft"
+    creds: dict[str, Any] | None = None
+
+
+@app.post("/api/history/{article_id}/publish")
+def history_publish(article_id: str, req: HistoryPublishReq) -> dict:
+    row = history_store.get(article_id)
+    if not row:
+        raise HTTPException(404, "Not found")
+
+    class _Article:
+        title = row["title"]
+        body_html = row["body_html"]
+        meta_description = row["meta_description"]
+
+    pub = _auto_publish(_Article(), PublishSpec(platform=req.platform, status=req.status, creds=req.creds))
+    history_store.add_publication(article_id, pub)
+    return pub
 
 
 # ---------------------------------------------------------------------------

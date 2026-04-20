@@ -45,6 +45,46 @@ class ShopifyClient(PlatformClient):
         data = self._request("GET", "products.json", params={"limit": limit, **params})
         return data.get("products", [])
 
+    # --- Blog articles ------------------------------------------------------
+
+    def list_blogs(self) -> list[dict]:
+        return self._request("GET", "blogs.json").get("blogs", [])
+
+    def list_articles(self, limit: int = 50) -> list[dict]:
+        """Flatten articles across all blogs."""
+        out = []
+        for blog in self.list_blogs():
+            data = self._request(
+                "GET", f"blogs/{blog['id']}/articles.json", params={"limit": limit}
+            )
+            for a in data.get("articles", []):
+                a["_blog_id"] = blog["id"]
+                a["_blog_handle"] = blog.get("handle", "")
+                out.append(a)
+        return out
+
+    def search_articles(self, query: str, limit: int = 5) -> list[dict]:
+        q = (query or "").lower().strip()
+        if not q:
+            return []
+        out = []
+        for a in self.list_articles(limit=50):
+            hay = f"{a.get('title', '')} {a.get('tags', '')} {a.get('summary_html', '')}".lower()
+            if q in hay:
+                url = f"https://{self.shop}/blogs/{a.get('_blog_handle', '')}/{a.get('handle', '')}"
+                out.append(
+                    {
+                        "id": a.get("id"),
+                        "title": a.get("title", ""),
+                        "url": url,
+                        "slug": a.get("handle", ""),
+                        "excerpt": a.get("summary_html", ""),
+                    }
+                )
+            if len(out) >= limit:
+                break
+        return out
+
     def get_product(self, product_id: int) -> dict:
         return self._request("GET", f"products/{product_id}.json").get("product", {})
 

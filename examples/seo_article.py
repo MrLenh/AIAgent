@@ -28,7 +28,7 @@ def main() -> None:
         word_count=1400,
     )
 
-    print("Title:", article.title())
+    print("Title:", article.title)
     print("Slug:", article.slug)
     print("Meta:", article.meta_description)
 

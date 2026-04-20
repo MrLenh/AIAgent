@@ -44,6 +44,30 @@ class WordPressClient(PlatformClient):
     def list_posts(self, per_page: int = 20, **params) -> list[dict]:
         return self._request("GET", "posts", params={"per_page": per_page, **params})
 
+    def search_posts(self, query: str, per_page: int = 5) -> list[dict]:
+        """Return published posts that match ``query`` — title, excerpt, URL."""
+        posts = self._request(
+            "GET",
+            "posts",
+            params={
+                "search": query,
+                "per_page": per_page,
+                "_fields": "id,title,link,excerpt,slug",
+            },
+        )
+        out = []
+        for p in posts:
+            out.append(
+                {
+                    "id": p.get("id"),
+                    "title": (p.get("title") or {}).get("rendered", ""),
+                    "url": p.get("link", ""),
+                    "slug": p.get("slug", ""),
+                    "excerpt": (p.get("excerpt") or {}).get("rendered", ""),
+                }
+            )
+        return out
+
     def get_post(self, post_id: int) -> dict:
         return self._request("GET", f"posts/{post_id}")
 

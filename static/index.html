@@ -130,9 +130,48 @@
           </div>
           <div>
             <label class="label">Reference data (optional)</label>
-            <textarea x-model="seo.reference" rows="4" class="field" placeholder="Ghi chú, số liệu, brief..."></textarea>
+            <textarea x-model="seo.reference" rows="3" class="field" placeholder="Ghi chú, số liệu, brief..."></textarea>
           </div>
-          <button @click="runSEO()" :disabled="seo.loading" class="btn-primary">
+
+          <div class="border-t border-border pt-3 space-y-3">
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="label">Internal links from</label>
+                <select x-model="seo.internal_source" class="field">
+                  <option value="none">None</option>
+                  <option value="wordpress">WordPress (search)</option>
+                  <option value="shopify">Shopify blog (search)</option>
+                  <option value="history">History (previous articles)</option>
+                </select>
+              </div>
+              <div class="flex items-center gap-2 pt-5">
+                <input type="checkbox" x-model="seo.check_duplicates" id="dup" class="w-4 h-4">
+                <label for="dup" class="text-sm text-gray-300">Check duplicates</label>
+              </div>
+            </div>
+            <div>
+              <label class="label">External reference URLs (one per line)</label>
+              <textarea x-model="seo.external_raw" rows="2" class="field font-mono text-xs" placeholder="https://source1.com/...&#10;https://source2.com/..."></textarea>
+            </div>
+          </div>
+
+          <div class="border-t border-border pt-3 space-y-2">
+            <div class="flex items-center gap-2">
+              <input type="checkbox" x-model="seo.auto_publish" id="ap" class="w-4 h-4">
+              <label for="ap" class="text-sm text-gray-300">Auto-publish after generate</label>
+            </div>
+            <div x-show="seo.auto_publish" class="grid grid-cols-2 gap-3">
+              <select x-model="seo.publish_platform" class="field">
+                <option value="wordpress">WordPress</option>
+              </select>
+              <select x-model="seo.publish_status" class="field">
+                <option value="draft">Draft</option>
+                <option value="publish">Publish</option>
+              </select>
+            </div>
+          </div>
+
+          <button @click="runSEO()" :disabled="seo.loading" class="btn-primary w-full">
             <span x-show="!seo.loading">Generate article</span>
             <span x-show="seo.loading">Generating...</span>
           </button>
@@ -148,6 +187,29 @@
           </template>
           <template x-if="seo.result">
             <div class="space-y-3 text-sm">
+              <template x-if="seo.result.duplicates && seo.result.duplicates.length">
+                <div class="bg-danger/10 border border-danger/30 text-danger rounded-lg p-3 text-xs">
+                  ⚠ Có <span x-text="seo.result.duplicates.length"></span> bài trùng keyword primary:
+                  <ul class="mt-1 list-disc pl-5">
+                    <template x-for="d in seo.result.duplicates">
+                      <li><a :href="d.url" target="_blank" class="underline" x-text="d.title"></a></li>
+                    </template>
+                  </ul>
+                </div>
+              </template>
+              <template x-if="seo.result.related && seo.result.related.length">
+                <details class="border border-border rounded-lg text-xs">
+                  <summary class="px-3 py-2 cursor-pointer text-muted">
+                    Related (<span x-text="seo.result.related.length"></span>) — đã dùng làm internal link
+                  </summary>
+                  <ul class="px-4 py-2 space-y-1">
+                    <template x-for="r in seo.result.related">
+                      <li><a :href="r.url" target="_blank" class="text-accent2 underline" x-text="r.title"></a></li>
+                    </template>
+                  </ul>
+                </details>
+              </template>
+
               <div>
                 <div class="label">Title</div>
                 <div class="text-white font-medium" x-text="seo.result.title"></div>
@@ -157,33 +219,45 @@
                 <div x-text="seo.result.meta_description"></div>
               </div>
               <div class="flex gap-3">
-                <div class="flex-1">
-                  <div class="label">Slug</div>
-                  <div class="text-accent" x-text="seo.result.slug"></div>
-                </div>
-                <div class="flex-1">
-                  <div class="label">Keywords</div>
-                  <div x-text="(seo.result.keywords || []).join(', ')"></div>
-                </div>
+                <div class="flex-1"><div class="label">Slug</div><div class="text-accent" x-text="seo.result.slug"></div></div>
+                <div class="flex-1"><div class="label">Keywords</div><div x-text="(seo.result.keywords || []).join(', ')"></div></div>
               </div>
+
+              <div class="flex gap-2 text-xs">
+                <button @click="copyToClipboard(seo.result.body_html)" class="btn-ghost">Copy HTML</button>
+                <button @click="seo.showPreview = !seo.showPreview" class="btn-ghost" x-text="seo.showPreview ? 'Hide preview' : 'Show preview'"></button>
+                <span x-show="seo.result.history_id" class="text-muted self-center">id: <code x-text="seo.result.history_id?.slice(0, 8)"></code></span>
+              </div>
+              <div x-show="seo.showPreview" class="border border-border rounded-lg bg-white text-gray-900 p-4 max-h-96 overflow-auto" x-html="seo.result.body_html"></div>
               <details class="border border-border rounded-lg">
-                <summary class="px-3 py-2 text-sm cursor-pointer text-muted">Full body</summary>
-                <pre class="p-3 text-xs whitespace-pre-wrap text-gray-300" x-text="seo.result.body"></pre>
+                <summary class="px-3 py-2 text-sm cursor-pointer text-muted">Raw HTML</summary>
+                <pre class="p-3 text-xs whitespace-pre-wrap text-gray-300" x-text="seo.result.body_html"></pre>
               </details>
-              <div class="pt-3 border-t border-border">
-                <div class="label mb-2">Publish to WordPress</div>
-                <div class="flex gap-2">
-                  <select x-model="seo.publish_status" class="field flex-none w-32">
-                    <option value="draft">Draft</option>
-                    <option value="publish">Publish</option>
-                  </select>
-                  <button @click="publishToWP()" :disabled="seo.publishing" class="btn-secondary flex-1">
-                    <span x-show="!seo.publishing">Push to WordPress</span>
-                    <span x-show="seo.publishing">Publishing...</span>
-                  </button>
+
+              <template x-if="seo.result.published">
+                <div class="bg-accent/10 border border-accent/30 text-accent rounded-lg p-3 text-xs">
+                  ✓ Auto-published to <span x-text="seo.result.published.platform"></span> →
+                  <a :href="seo.result.published.url" target="_blank" class="underline" x-text="seo.result.published.url"></a>
+                  (<span x-text="seo.result.published.status"></span>)
                 </div>
-                <div x-show="seo.publishResult" class="mt-2 text-xs text-accent" x-text="seo.publishResult"></div>
-              </div>
+              </template>
+
+              <template x-if="!seo.result.published">
+                <div class="pt-3 border-t border-border">
+                  <div class="label mb-2">Publish to WordPress</div>
+                  <div class="flex gap-2">
+                    <select x-model="seo.publish_status" class="field flex-none w-32">
+                      <option value="draft">Draft</option>
+                      <option value="publish">Publish</option>
+                    </select>
+                    <button @click="publishToWP()" :disabled="seo.publishing" class="btn-secondary flex-1">
+                      <span x-show="!seo.publishing">Push to WordPress</span>
+                      <span x-show="seo.publishing">Publishing...</span>
+                    </button>
+                  </div>
+                  <div x-show="seo.publishResult" class="mt-2 text-xs text-accent" x-text="seo.publishResult"></div>
+                </div>
+              </template>
             </div>
           </template>
           <template x-if="!seo.result && !seo.error && !seo.loading">
@@ -331,6 +405,92 @@
           </template>
           <template x-if="!analyze.result && !analyze.error && !analyze.loading">
             <div class="text-muted text-sm">Chọn nguồn dữ liệu và đặt câu hỏi.</div>
+          </template>
+        </div>
+      </div>
+    </section>
+
+    <!-- History tab -->
+    <section x-show="tab === 'history'" class="space-y-6">
+      <header class="flex items-center justify-between">
+        <div>
+          <h1 class="text-2xl font-semibold text-white">History</h1>
+          <p class="text-sm text-muted">Tất cả bài SEO đã generate. Dùng để tham khảo, republish, hoặc internal-link nội bộ.</p>
+        </div>
+        <button @click="loadHistory()" class="btn-ghost text-xs">Refresh</button>
+      </header>
+
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div class="bg-panel border border-border rounded-xl p-3 lg:col-span-1 max-h-[75vh] overflow-y-auto">
+          <template x-if="!history.items.length">
+            <div class="text-muted text-sm p-3">Chưa có bài nào.</div>
+          </template>
+          <template x-for="item in history.items" :key="item.id">
+            <button @click="openHistoryItem(item.id)"
+                    :class="history.selected?.id === item.id ? 'bg-panel2' : 'hover:bg-panel2/60'"
+                    class="w-full text-left p-3 rounded-lg mb-1 transition">
+              <div class="text-sm text-white font-medium truncate" x-text="item.title || item.topic"></div>
+              <div class="flex items-center gap-2 mt-1 text-xs text-muted">
+                <span x-text="new Date(item.created_at).toLocaleString()"></span>
+                <span>·</span>
+                <span class="text-accent" x-text="item.primary_keyword"></span>
+              </div>
+              <div x-show="item.published_to?.length" class="text-xs text-accent mt-1">
+                ✓ published ×<span x-text="item.published_to.length"></span>
+              </div>
+            </button>
+          </template>
+        </div>
+
+        <div class="bg-panel border border-border rounded-xl p-5 lg:col-span-2">
+          <template x-if="!history.selected">
+            <div class="text-muted text-sm">Chọn một bài để xem chi tiết.</div>
+          </template>
+          <template x-if="history.selected">
+            <div class="space-y-3 text-sm">
+              <div class="flex items-center justify-between">
+                <h3 class="font-medium text-white" x-text="history.selected.title"></h3>
+                <button @click="deleteHistoryItem(history.selected.id)" class="btn-ghost text-xs text-danger">Delete</button>
+              </div>
+              <div class="grid grid-cols-2 gap-3 text-xs">
+                <div><span class="text-muted">Keyword:</span> <span class="text-accent" x-text="history.selected.primary_keyword"></span></div>
+                <div><span class="text-muted">Slug:</span> <span x-text="history.selected.slug"></span></div>
+                <div><span class="text-muted">LLM:</span> <span x-text="`${history.selected.llm_provider} / ${history.selected.llm_model}`"></span></div>
+                <div><span class="text-muted">Created:</span> <span x-text="new Date(history.selected.created_at).toLocaleString()"></span></div>
+              </div>
+              <div><div class="label">Meta</div><div x-text="history.selected.meta_description"></div></div>
+
+              <div x-show="history.selected.published_to?.length">
+                <div class="label">Published</div>
+                <ul class="space-y-1 text-xs">
+                  <template x-for="p in history.selected.published_to">
+                    <li>
+                      <span class="text-accent" x-text="p.platform"></span> ·
+                      <a :href="p.url" target="_blank" class="underline" x-text="p.url"></a>
+                      · <span x-text="p.status"></span> · <span class="text-muted" x-text="new Date(p.at).toLocaleString()"></span>
+                    </li>
+                  </template>
+                </ul>
+              </div>
+
+              <div class="flex gap-2 pt-3 border-t border-border">
+                <button @click="copyToClipboard(history.selected.body_html)" class="btn-ghost text-xs">Copy HTML</button>
+                <button @click="history.showPreview = !history.showPreview" class="btn-ghost text-xs" x-text="history.showPreview ? 'Hide preview' : 'Preview'"></button>
+                <div class="flex gap-2 ml-auto">
+                  <select x-model="history.publishStatus" class="field w-28 text-xs">
+                    <option value="draft">Draft</option>
+                    <option value="publish">Publish</option>
+                  </select>
+                  <button @click="republish('wordpress')" :disabled="history.publishing" class="btn-secondary text-xs">
+                    <span x-show="!history.publishing">Push to WP</span>
+                    <span x-show="history.publishing">...</span>
+                  </button>
+                </div>
+              </div>
+              <div x-show="history.publishResult" class="text-xs" :class="history.publishOk ? 'text-accent' : 'text-danger'" x-text="history.publishResult"></div>
+
+              <div x-show="history.showPreview" class="border border-border rounded-lg bg-white text-gray-900 p-4 max-h-96 overflow-auto" x-html="history.selected.body_html"></div>
+            </div>
           </template>
         </div>
       </div>

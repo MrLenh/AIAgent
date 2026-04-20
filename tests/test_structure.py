@@ -40,17 +40,19 @@ def test_csv_source_load(tmp_path: Path):
 
 def test_seo_article_parsing():
     raw = (
-        "# Great Title\n\n"
-        "META DESCRIPTION: A compelling meta description.\n"
+        "TITLE: Great Title\n"
+        "META_DESCRIPTION: A compelling meta description.\n"
         "SLUG: great-title\n"
-        "KEYWORDS: a, b, c\n\n"
-        "## Intro\nBody."
+        "KEYWORDS: a, b, c\n"
+        "---\n"
+        "<article><h1>Great Title</h1><p>Body.</p></article>"
     )
-    art = SEOArticle(raw=raw)
-    assert art.title() == "Great Title"
+    art = SEOArticle.parse(raw)
+    assert art.title == "Great Title"
     assert art.slug == "great-title"
     assert art.meta_description == "A compelling meta description."
     assert art.keywords == ["a", "b", "c"]
+    assert art.body_html.startswith("<article>")
 
 
 def test_optimized_listing_from_json():
@@ -70,7 +72,7 @@ def test_optimized_listing_from_json():
 
 def test_agent_write_seo_article_passes_sources_to_llm():
     llm = FakeLLM(
-        "# Title\n\nMETA DESCRIPTION: x\nSLUG: t\nKEYWORDS: a\n\n## I\nbody"
+        "TITLE: Title\nMETA_DESCRIPTION: x\nSLUG: t\nKEYWORDS: a\n---\n<article><h1>Title</h1></article>"
     )
     agent = AIAgent(llm=llm)
     agent.register_source(TextSource(content="CONTEXT_BLOB"), name="ctx")
@@ -79,11 +81,40 @@ def test_agent_write_seo_article_passes_sources_to_llm():
         topic="t",
         primary_keyword="kw",
         use_sources=["ctx"],
+        related_articles=[{"title": "Existing", "url": "https://x.com/post", "excerpt": "old"}],
     )
-    assert article.title() == "Title"
+    assert article.title == "Title"
     user_prompt = llm.calls[0][-1].content
     assert "CONTEXT_BLOB" in user_prompt
     assert "kw" in user_prompt
+    assert "https://x.com/post" in user_prompt
+
+
+def test_history_store_roundtrip(tmp_path: Path):
+    from ai_agent.history import HistoryStore
+
+    store = HistoryStore(url=f"sqlite:///{tmp_path}/h.db")
+    art_id = store.save(
+        topic="t", title="My Article", slug="my-article",
+        primary_keyword="pour over", keywords=["a", "b"],
+        meta_description="m", body_html="<article/>", body_raw="raw",
+        llm_provider="claude", llm_model="x",
+    )
+    assert art_id
+    got = store.get(art_id)
+    assert got["title"] == "My Article"
+    assert store.list(limit=10)[0]["id"] == art_id
+
+    store.add_publication(art_id, {"platform": "wp", "id": 99, "url": "https://u", "status": "draft"})
+    got = store.get(art_id)
+    assert got["published_to"][0]["platform"] == "wp"
+    assert got["published_to"][0]["at"]
+
+    sim = store.find_similar("pour over")
+    assert sim and sim[0]["id"] == art_id
+
+    assert store.delete(art_id) is True
+    assert store.get(art_id) is None
 
 
 def test_agent_apply_listing_routes_to_shopify():

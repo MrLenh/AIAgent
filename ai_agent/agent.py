@@ -52,6 +52,8 @@ class AIAgent:
         word_count: int = 1200,
         tone: str = "informative and friendly",
         use_sources: list[str] | None = None,
+        related_articles: list[dict] | None = None,
+        external_references: list[str] | None = None,
     ) -> SEOArticle:
         task = SEOArticleTask(self.llm)
         return task.run(
@@ -62,6 +64,8 @@ class AIAgent:
             word_count=word_count,
             tone=tone,
             sources=self._collect_sources(use_sources),
+            related_articles=related_articles,
+            external_references=external_references,
         )
 
     def optimize_listing(
@@ -96,11 +100,10 @@ class AIAgent:
         status: str = "draft",
     ) -> dict:
         platform = self.platforms[platform_name]
-        # WordPress
         if hasattr(platform, "create_post"):
             return platform.create_post(
-                title=article.title(),
-                content=article.raw,
+                title=article.title,
+                content=article.body_html,
                 excerpt=article.meta_description,
                 status=status,
             )

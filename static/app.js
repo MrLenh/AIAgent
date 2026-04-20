@@ -2,11 +2,12 @@ function agentApp() {
   return {
     tab: 'status',
     tabs: [
-      { id: 'status',   label: 'Status',    icon: '◉' },
+      { id: 'status',   label: 'Status',      icon: '◉' },
       { id: 'seo',      label: 'SEO Article', icon: '✎' },
-      { id: 'listing',  label: 'Listing',   icon: '✦' },
-      { id: 'analyze',  label: 'Analysis',  icon: '∴' },
-      { id: 'settings', label: 'Settings',  icon: '⚙' },
+      { id: 'listing',  label: 'Listing',     icon: '✦' },
+      { id: 'analyze',  label: 'Analysis',    icon: '∴' },
+      { id: 'history',  label: 'History',     icon: '☰' },
+      { id: 'settings', label: 'Settings',    icon: '⚙' },
     ],
     status: { llm_configured: false, env: {} },
 
@@ -14,8 +15,25 @@ function agentApp() {
       topic: '', primary_keyword: '', secondary_keywords_raw: '',
       audience: 'general readers', word_count: 1200, tone: 'informative and friendly',
       reference: '',
+      internal_source: 'none',
+      external_raw: '',
+      check_duplicates: true,
+      auto_publish: false,
+      publish_platform: 'wordpress',
+      publish_status: 'draft',
       loading: false, result: null, error: '',
-      publishing: false, publishResult: '', publish_status: 'draft',
+      publishing: false, publishResult: '',
+      showPreview: false,
+    },
+
+    history: {
+      items: [],
+      selected: null,
+      showPreview: false,
+      publishing: false,
+      publishStatus: 'draft',
+      publishResult: '',
+      publishOk: false,
     },
 
     listing: {
@@ -49,6 +67,7 @@ function agentApp() {
     async init() {
       this.loadSettings();
       await this.refreshStatus();
+      this.$watch('tab', (t) => { if (t === 'history') this.loadHistory(); });
     },
 
     async refreshStatus() {
@@ -97,6 +116,25 @@ function agentApp() {
       try {
         const sources = this.seo.reference.trim()
           ? [{ type: 'text', content: this.seo.reference }] : [];
+
+        let internal_links = null;
+        if (this.seo.internal_source !== 'none') {
+          const creds = this.credsFor(this.seo.internal_source);
+          internal_links = { source: this.seo.internal_source, creds, limit: 5 };
+        }
+
+        const external_links = this.seo.external_raw
+          .split('\n').map(s => s.trim()).filter(Boolean);
+
+        let publish = null;
+        if (this.seo.auto_publish) {
+          publish = {
+            platform: this.seo.publish_platform,
+            status: this.seo.publish_status,
+            creds: this.credsFor(this.seo.publish_platform),
+          };
+        }
+
         const body = {
           topic: this.seo.topic,
           primary_keyword: this.seo.primary_keyword,
@@ -106,11 +144,28 @@ function agentApp() {
           word_count: this.seo.word_count,
           tone: this.seo.tone,
           sources,
+          internal_links,
+          external_links,
+          check_duplicates: this.seo.check_duplicates,
+          publish,
+          save_history: true,
           llm: this.llmPayload(),
         };
         this.seo.result = await this.postJSON('/api/seo-article', body);
       } catch (e) { this.seo.error = e.message; }
       finally { this.seo.loading = false; }
+    },
+
+    credsFor(platform) {
+      if (platform === 'wordpress' || platform === 'wp') {
+        const wp = this.settings.wordpress;
+        if (wp.base_url && wp.username && wp.app_password) return { ...wp };
+      }
+      if (platform === 'shopify') {
+        const s = this.settings.shopify;
+        if (s.shop && s.access_token) return { ...s };
+      }
+      return null;  // backend falls back to env
     },
 
     async publishToWP() {
@@ -124,13 +179,52 @@ function agentApp() {
         const r = await this.postJSON('/api/wordpress/publish', {
           ...wp,
           title: this.seo.result.title,
-          content: this.seo.result.body,
+          content: this.seo.result.body_html,
           excerpt: this.seo.result.meta_description,
           status: this.seo.publish_status,
         });
         this.seo.publishResult = `Published: ${r.link || r.id || 'ok'}`;
       } catch (e) { this.seo.publishResult = `Error: ${e.message}`; }
       finally { this.seo.publishing = false; }
+    },
+
+    // ---- History ----
+    async loadHistory() {
+      try {
+        const r = await fetch('/api/history?limit=200');
+        const data = await r.json();
+        this.history.items = data.items || [];
+      } catch (e) {}
+    },
+    async openHistoryItem(id) {
+      try {
+        const r = await fetch(`/api/history/${id}`);
+        this.history.selected = await r.json();
+        this.history.showPreview = false;
+        this.history.publishResult = '';
+      } catch (e) {}
+    },
+    async deleteHistoryItem(id) {
+      if (!confirm('Xoá bài này?')) return;
+      await fetch(`/api/history/${id}`, { method: 'DELETE' });
+      this.history.selected = null;
+      await this.loadHistory();
+    },
+    async republish(platform) {
+      if (!this.history.selected) return;
+      this.history.publishing = true; this.history.publishResult = '';
+      try {
+        const r = await this.postJSON(`/api/history/${this.history.selected.id}/publish`, {
+          platform, status: this.history.publishStatus,
+          creds: this.credsFor(platform),
+        });
+        this.history.publishOk = true;
+        this.history.publishResult = `Published: ${r.url || r.id}`;
+        await this.openHistoryItem(this.history.selected.id);
+      } catch (e) {
+        this.history.publishOk = false;
+        this.history.publishResult = `Error: ${e.message}`;
+      } finally { this.history.publishing = false; }
     },
 
     // ---- Listing ----
