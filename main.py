@@ -25,20 +25,28 @@ from pydantic import BaseModel, Field
 
 from ai_agent import (
     AIAgent,
+    AuditStorage,
+    BlogCrawler,
     ClaudeProvider,
+    ContentPlanTask,
     GeminiProvider,
+    GSCClient,
     HistoryStore,
+    KeywordAuditTask,
     OpenAIProvider,
     ShopifyClient,
     WooCommerceClient,
     WordPressClient,
 )
+from ai_agent.audit.ahrefs import AhrefsClient
+from ai_agent.audit.keyword_audit import AuditReport
 from ai_agent.data_sources import CSVSource, DatabaseSource, TextSource
 from ai_agent.llm.base import LLMProvider
 from ai_agent.tasks.listing import OptimizedListing
 
 
 history_store = HistoryStore()
+audit_storage = AuditStorage()
 
 
 BASE_DIR = Path(__file__).parent
@@ -641,6 +649,266 @@ def platform_test(req: PlatformTest) -> dict:
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Audit
+# ---------------------------------------------------------------------------
+
+
+class WPCredsOpt(BaseModel):
+    base_url: str | None = None
+    username: str | None = None
+    app_password: str | None = None
+
+
+class CrawlRequest(BaseModel):
+    source: str = "wordpress"  # "wordpress" | "sitemap"
+    base_url: str | None = None
+    wp: WPCredsOpt | None = None
+    limit: int = 100
+
+
+def _wp_client_from(creds: WPCredsOpt | None) -> WordPressClient:
+    c = creds or WPCredsOpt()
+    return WordPressClient(
+        base_url=c.base_url or os.getenv("WORDPRESS_URL", ""),
+        username=c.username or os.getenv("WORDPRESS_USERNAME", ""),
+        app_password=c.app_password or os.getenv("WORDPRESS_APP_PASSWORD", ""),
+    )
+
+
+@app.post("/api/audit/crawl")
+def audit_crawl(req: CrawlRequest) -> dict:
+    if req.source == "wordpress":
+        crawler = BlogCrawler(wp=_wp_client_from(req.wp))
+    else:
+        if not req.base_url:
+            raise HTTPException(400, "base_url required for sitemap crawl")
+        crawler = BlogCrawler(base_url=req.base_url)
+    posts = crawler.crawl(limit=req.limit)
+    return {
+        "count": len(posts),
+        "posts": [
+            {
+                "url": p.url, "title": p.title, "slug": p.slug,
+                "published": p.published, "word_count": p.word_count,
+                "excerpt": p.excerpt[:240],
+            }
+            for p in posts
+        ],
+    }
+
+
+class GSCRequest(BaseModel):
+    site_url: str
+    service_account_json: dict[str, Any] | str
+    days: int = 28
+    row_limit: int = 500
+    dimensions: list[str] = Field(default_factory=lambda: ["query"])
+
+
+@app.post("/api/audit/gsc/query")
+def audit_gsc_query(req: GSCRequest) -> dict:
+    gsc = GSCClient(req.site_url, req.service_account_json)
+    start, end = gsc._window(req.days)
+    rows = gsc.query(start, end, req.dimensions, row_limit=req.row_limit)
+    return {"rows": rows, "start": start, "end": end}
+
+
+@app.post("/api/audit/gsc/sites")
+def audit_gsc_sites(req: GSCRequest) -> dict:
+    gsc = GSCClient(req.site_url, req.service_account_json)
+    return {"sites": gsc.list_sites()}
+
+
+class AhrefsRequest(BaseModel):
+    api_token: str
+    target: str | None = None
+    seed: str | None = None
+    country: str = "us"
+    competitors: list[str] = Field(default_factory=list)
+    limit: int = 50
+
+
+@app.post("/api/audit/ahrefs/competitors")
+def audit_ahrefs_competitors(req: AhrefsRequest) -> dict:
+    if not req.target:
+        raise HTTPException(400, "target required")
+    return {"competitors": AhrefsClient(req.api_token).organic_competitors(req.target, req.country, req.limit)}
+
+
+@app.post("/api/audit/ahrefs/content-gap")
+def audit_ahrefs_gap(req: AhrefsRequest) -> dict:
+    if not req.target or not req.competitors:
+        raise HTTPException(400, "target and competitors required")
+    return {"keywords": AhrefsClient(req.api_token).content_gap(req.target, req.competitors, req.country, req.limit)}
+
+
+@app.post("/api/audit/ahrefs/keyword-ideas")
+def audit_ahrefs_ideas(req: AhrefsRequest) -> dict:
+    if not req.seed:
+        raise HTTPException(400, "seed required")
+    return {"keywords": AhrefsClient(req.api_token).keyword_ideas(req.seed, req.country, req.limit)}
+
+
+class RunAuditRequest(BaseModel):
+    blog_posts: list[dict[str, Any]] = Field(default_factory=list)
+    gsc_queries: list[dict[str, Any]] = Field(default_factory=list)
+    gsc_pages: list[dict[str, Any]] = Field(default_factory=list)
+    competitor_keywords: list[dict[str, Any]] = Field(default_factory=list)
+    competitors: list[dict[str, Any]] = Field(default_factory=list)
+    llm: LLMConfig | None = None
+
+
+@app.post("/api/audit/run")
+def audit_run(req: RunAuditRequest) -> dict:
+    agent = _require_agent(req.llm)
+    report = KeywordAuditTask(agent.llm).run(
+        blog_posts=req.blog_posts,
+        gsc_queries=req.gsc_queries,
+        gsc_pages=req.gsc_pages,
+        competitor_keywords=req.competitor_keywords,
+        competitors=req.competitors,
+    )
+    return report.to_dict()
+
+
+class PlanRequest(BaseModel):
+    audit: dict[str, Any]
+    timeframe: str = "next 30 days"
+    inventory_urls: list[str] = Field(default_factory=list)
+    max_items: int = 12
+    site: str = ""
+    save: bool = True
+    llm: LLMConfig | None = None
+
+
+@app.post("/api/audit/plan")
+def audit_plan(req: PlanRequest) -> dict:
+    agent = _require_agent(req.llm)
+    audit_obj = AuditReport.from_llm(req.audit.get("raw") or "") if req.audit.get("raw") else req.audit
+    plan = ContentPlanTask(agent.llm).run(
+        audit_obj,
+        timeframe=req.timeframe,
+        inventory_urls=req.inventory_urls,
+        max_items=req.max_items,
+    )
+    plan_id = None
+    if req.save:
+        plan_id = audit_storage.save_plan(
+            site=req.site,
+            timeframe=plan.timeframe or req.timeframe,
+            items=[i for i in plan.to_dict()["items"]],
+            summary=req.audit.get("summary", ""),
+        )
+    result = plan.to_dict()
+    result["plan_id"] = plan_id
+    return result
+
+
+@app.get("/api/audit/plans")
+def audit_list_plans(limit: int = 50) -> dict:
+    return {"items": audit_storage.list_plans(limit=limit)}
+
+
+@app.get("/api/audit/plans/{plan_id}")
+def audit_get_plan(plan_id: str) -> dict:
+    plan = audit_storage.get_plan(plan_id)
+    if not plan:
+        raise HTTPException(404, "Not found")
+    return plan
+
+
+@app.delete("/api/audit/plans/{plan_id}")
+def audit_delete_plan(plan_id: str) -> dict:
+    if not audit_storage.delete_plan(plan_id):
+        raise HTTPException(404, "Not found")
+    return {"ok": True}
+
+
+class ExecutePlanItem(BaseModel):
+    plan_id: str
+    item_index: int
+    publish: PublishSpec | None = None
+    internal_links: InternalLinkSpec | None = None
+    llm: LLMConfig | None = None
+
+
+@app.post("/api/audit/plan/execute")
+def audit_execute_item(req: ExecutePlanItem) -> dict:
+    plan = audit_storage.get_plan(req.plan_id)
+    if not plan:
+        raise HTTPException(404, "Plan not found")
+    items = plan.get("items") or []
+    if req.item_index < 0 or req.item_index >= len(items):
+        raise HTTPException(400, "item_index out of range")
+    item = items[req.item_index]
+
+    seo_req = SEORequest(
+        topic=item.get("title", ""),
+        primary_keyword=item.get("primary_keyword", ""),
+        secondary_keywords=item.get("secondary_keywords", []) or [],
+        audience=item.get("target_audience", "general readers"),
+        word_count=item.get("word_count", 1200) or 1200,
+        tone="informative and friendly",
+        internal_links=req.internal_links,
+        external_links=[],
+        check_duplicates=True,
+        publish=req.publish,
+        save_history=True,
+        llm=req.llm,
+    )
+    try:
+        result = seo_article(seo_req)
+        audit_storage.update_item_status(
+            req.plan_id,
+            req.item_index,
+            status="published" if result.get("published") else "generated",
+            article_id=result.get("history_id") or "",
+            published_url=(result.get("published") or {}).get("url", ""),
+        )
+        return {"ok": True, "result": result}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        audit_storage.update_item_status(
+            req.plan_id, req.item_index, status="failed", notes=str(exc)[:500]
+        )
+        raise
+
+
+class RankingSnapshotReq(BaseModel):
+    site: str
+    service_account_json: dict[str, Any] | str
+    keywords: list[str] = Field(default_factory=list)
+    days: int = 7
+
+
+@app.post("/api/audit/ranking/snapshot")
+def audit_ranking_snapshot(req: RankingSnapshotReq) -> dict:
+    gsc = GSCClient(req.site, req.service_account_json)
+    rows = (
+        gsc.positions_for_keywords(req.keywords, days=req.days)
+        if req.keywords
+        else gsc.top_queries(days=req.days, row_limit=200)
+    )
+    n = audit_storage.add_ranking(site=req.site, rows=rows, source="gsc")
+    return {"saved": n, "rows": rows[:50]}
+
+
+@app.get("/api/audit/ranking")
+def audit_ranking_query(keyword: str, site: str | None = None, days: int = 90) -> dict:
+    return {
+        "keyword": keyword,
+        "site": site,
+        "history": audit_storage.ranking_history(keyword, site=site, days=days),
+    }
+
+
+@app.get("/api/audit/ranking/latest")
+def audit_ranking_latest(site: str, limit: int = 200) -> dict:
+    return {"items": audit_storage.latest_rankings(site=site, limit=limit)}
 
 
 # ---------------------------------------------------------------------------

@@ -143,6 +143,31 @@ See `examples/`:
 - `optimize_shopify.py` — rewrite a Shopify product listing using Gemini.
 - `sql_to_seo.py` — pull live SQL data and turn it into an SEO article.
 
+## Audit pipeline
+
+The **Audit** tab runs a full SEO audit → plan → execute loop:
+
+1. **Crawl site** – WordPress REST or generic sitemap. Gathers URL, title, word
+   count, outbound links.
+2. **Google Search Console** – service-account JSON → top queries + top pages
+   (28 days by default). Endpoints: `/api/audit/gsc/query`, `/api/audit/gsc/sites`.
+3. **Ahrefs (optional)** – organic competitors + content gap + keyword ideas.
+   Endpoints: `/api/audit/ahrefs/*`.
+4. **Keyword audit** – `/api/audit/run` feeds everything to the LLM and
+   returns structured JSON: quick wins, content gaps, cannibalization,
+   competitor insights.
+5. **Content plan** – `/api/audit/plan` turns the audit into a prioritised
+   list of articles (new / update / consolidate), saved to
+   `audit_storage.content_plan`.
+6. **Execute** – `/api/audit/plan/execute` generates a single plan item and
+   optionally auto-publishes to WordPress. Updates status per item.
+7. **Ranking tracker** – `/api/audit/ranking/snapshot` pulls GSC for the given
+   keywords and appends a row per run; `/api/audit/ranking?keyword=...` returns
+   the time series. Schedule via Railway cron / n8n / Zapier.
+
+All endpoints accept service-account JSON + Ahrefs token in the request body
+so no secrets need to live in env.
+
 ## Admin UI
 
 A lightweight SPA (Tailwind + Alpine.js, no build step) is bundled in

@@ -117,6 +117,57 @@ def test_history_store_roundtrip(tmp_path: Path):
     assert store.get(art_id) is None
 
 
+def test_audit_storage_plan_and_ranking_roundtrip(tmp_path: Path):
+    from ai_agent.audit.storage import AuditStorage
+
+    store = AuditStorage(url=f"sqlite:///{tmp_path}/audit.db")
+    plan_id = store.save_plan(
+        site="example.com",
+        timeframe="next 30 days",
+        items=[
+            {"priority": 1, "title": "Post A", "primary_keyword": "a"},
+            {"priority": 2, "title": "Post B", "primary_keyword": "b"},
+        ],
+    )
+    plan = store.get_plan(plan_id)
+    assert plan["item_count"] == 2
+    assert len(plan["statuses"]) == 2
+
+    store.update_item_status(plan_id, 0, status="published",
+                             article_id="art-1", published_url="https://u/1")
+    plan = store.get_plan(plan_id)
+    assert plan["statuses"][0]["status"] == "published"
+    assert plan["statuses"][0]["article_id"] == "art-1"
+
+    n = store.add_ranking(
+        site="example.com",
+        rows=[
+            {"query": "pour over", "position": 12.3, "clicks": 5, "impressions": 120, "ctr": 0.04},
+            {"query": "v60", "position": 4.1, "clicks": 8, "impressions": 90, "ctr": 0.09},
+        ],
+    )
+    assert n == 2
+    hist = store.ranking_history("pour over")
+    assert hist and hist[0]["position"] == 12.3
+    latest = store.latest_rankings("example.com")
+    assert len(latest) == 2
+
+
+def test_audit_report_parse_handles_json_with_noise():
+    from ai_agent.audit.keyword_audit import AuditReport
+
+    noisy = (
+        "Here is the audit report:\n```json\n"
+        '{"summary":"s","quick_wins":[{"query":"kw","current_position":12.3,'
+        '"url":"u","impressions":100,"clicks":3,"action":"a","expected_impact":"medium"}],'
+        '"content_gaps":[],"cannibalization":[],"competitor_insights":[]}'
+        "\n```"
+    )
+    r = AuditReport.from_llm(noisy)
+    assert r.summary == "s"
+    assert r.quick_wins[0].query == "kw"
+
+
 def test_agent_apply_listing_routes_to_shopify():
     llm = FakeLLM("")
     agent = AIAgent(llm=llm)

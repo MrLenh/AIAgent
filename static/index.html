@@ -410,6 +410,231 @@
       </div>
     </section>
 
+    <!-- Audit tab -->
+    <section x-show="tab === 'audit'" class="space-y-6 max-w-6xl">
+      <header>
+        <h1 class="text-2xl font-semibold text-white">Audit</h1>
+        <p class="text-sm text-muted">Đọc site → GSC/Ahrefs → LLM audit → content plan → auto-execute → ranking tracker.</p>
+      </header>
+
+      <!-- Step 1: Crawl -->
+      <div class="bg-panel border border-border rounded-xl p-5 space-y-3">
+        <div class="flex items-center justify-between">
+          <h3 class="font-medium text-white">1 · Crawl site</h3>
+          <span x-show="audit.posts.length" class="text-xs text-accent" x-text="`${audit.posts.length} posts loaded`"></span>
+        </div>
+        <div class="flex gap-2">
+          <input x-model="audit.site" class="field flex-1" placeholder="Để trống = dùng WordPress creds, hoặc nhập base URL (vd https://example.com) để dùng sitemap">
+          <button @click="crawlSite()" :disabled="audit.loadingCrawl" class="btn-secondary">
+            <span x-show="!audit.loadingCrawl">Crawl</span>
+            <span x-show="audit.loadingCrawl">Crawling...</span>
+          </button>
+        </div>
+        <details x-show="audit.posts.length" class="border border-border rounded-lg">
+          <summary class="px-3 py-2 text-sm cursor-pointer text-muted">Show posts</summary>
+          <div class="max-h-64 overflow-y-auto">
+            <template x-for="p in audit.posts.slice(0, 50)">
+              <div class="px-3 py-2 border-t border-border text-xs flex items-center gap-2">
+                <span class="text-muted" x-text="p.word_count + 'w'"></span>
+                <a :href="p.url" target="_blank" class="text-accent2 underline truncate flex-1" x-text="p.title || p.url"></a>
+              </div>
+            </template>
+          </div>
+        </details>
+      </div>
+
+      <!-- Step 2: GSC -->
+      <div class="bg-panel border border-border rounded-xl p-5 space-y-3">
+        <div class="flex items-center justify-between">
+          <h3 class="font-medium text-white">2 · Search Console</h3>
+          <span x-show="audit.gscQueries.length" class="text-xs text-accent" x-text="`${audit.gscQueries.length} queries · ${audit.gscPages.length} pages`"></span>
+        </div>
+        <div class="flex gap-2">
+          <input x-model="audit.gscSite" class="field flex-1" placeholder="Site URL (sc-domain:example.com hoặc https://example.com/)">
+          <input x-model.number="audit.gscDays" type="number" class="field w-24" placeholder="days">
+          <button @click="loadGSC()" :disabled="audit.loadingGsc" class="btn-secondary">
+            <span x-show="!audit.loadingGsc">Fetch GSC</span>
+            <span x-show="audit.loadingGsc">Loading...</span>
+          </button>
+        </div>
+        <p class="text-xs text-muted">Yêu cầu service account JSON đã được thêm quyền vào GSC property. Config ở tab Settings.</p>
+        <details x-show="audit.gscQueries.length" class="border border-border rounded-lg">
+          <summary class="px-3 py-2 text-sm cursor-pointer text-muted">Top queries</summary>
+          <div class="max-h-64 overflow-y-auto text-xs">
+            <template x-for="r in audit.gscQueries.slice(0, 50)">
+              <div class="px-3 py-1 border-t border-border flex gap-3">
+                <span class="flex-1 truncate" x-text="r.query"></span>
+                <span class="text-muted w-12 text-right" x-text="'#' + r.position.toFixed(1)"></span>
+                <span class="text-muted w-16 text-right" x-text="r.impressions + ' imp'"></span>
+                <span class="text-accent w-14 text-right" x-text="r.clicks + ' clk'"></span>
+              </div>
+            </template>
+          </div>
+        </details>
+      </div>
+
+      <!-- Step 3: Ahrefs -->
+      <div class="bg-panel border border-border rounded-xl p-5 space-y-3">
+        <div class="flex items-center justify-between">
+          <h3 class="font-medium text-white">3 · Ahrefs (optional)</h3>
+          <span x-show="audit.competitorKeywords.length" class="text-xs text-accent" x-text="`${audit.competitorKeywords.length} gap keywords`"></span>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <input x-model="audit.ahrefsTarget" class="field" placeholder="Your domain (example.com)">
+          <input x-model="audit.ahrefsCountry" class="field w-24" placeholder="us">
+        </div>
+        <input x-model="audit.ahrefsCompetitors" class="field" placeholder="Competitor domains, comma separated (auto-fill sau khi fetch competitors)">
+        <button @click="loadAhrefs()" :disabled="audit.loadingAhrefs" class="btn-secondary w-full">
+          <span x-show="!audit.loadingAhrefs">Fetch competitors + content gap</span>
+          <span x-show="audit.loadingAhrefs">Loading Ahrefs...</span>
+        </button>
+      </div>
+
+      <!-- Step 4: Run audit -->
+      <div class="bg-panel border border-border rounded-xl p-5 space-y-3">
+        <h3 class="font-medium text-white">4 · Run keyword audit</h3>
+        <button @click="runAudit()" :disabled="audit.loadingReport || !audit.posts.length" class="btn-primary w-full">
+          <span x-show="!audit.loadingReport">Analyze</span>
+          <span x-show="audit.loadingReport">Analyzing...</span>
+        </button>
+        <template x-if="audit.report">
+          <div class="space-y-4 text-sm pt-2">
+            <p class="text-gray-300" x-text="audit.report.summary"></p>
+            <div x-show="audit.report.quick_wins?.length">
+              <div class="label">Quick wins</div>
+              <div class="space-y-1">
+                <template x-for="q in audit.report.quick_wins">
+                  <div class="text-xs px-3 py-2 border border-border rounded flex items-center gap-3">
+                    <span class="text-accent w-12 text-right" x-text="'#' + q.current_position?.toFixed(1)"></span>
+                    <span class="flex-1 truncate">
+                      <span class="text-white" x-text="q.query"></span>
+                      <span class="block text-muted text-[11px] truncate" x-text="q.url"></span>
+                    </span>
+                    <span class="text-muted" x-text="q.action"></span>
+                    <span class="px-2 py-0.5 rounded" :class="q.expected_impact==='high'?'bg-accent/10 text-accent':'bg-panel2 text-muted'" x-text="q.expected_impact"></span>
+                  </div>
+                </template>
+              </div>
+            </div>
+            <div x-show="audit.report.content_gaps?.length">
+              <div class="label">Content gaps</div>
+              <div class="space-y-1">
+                <template x-for="g in audit.report.content_gaps">
+                  <div class="text-xs px-3 py-2 border border-border rounded">
+                    <div class="text-white" x-text="g.topic"></div>
+                    <div class="text-muted text-[11px]"><span class="text-accent" x-text="g.suggested_primary_keyword"></span> · diff: <span x-text="g.difficulty"></span> · <span x-text="g.rationale"></span></div>
+                  </div>
+                </template>
+              </div>
+            </div>
+            <div x-show="audit.report.cannibalization?.length">
+              <div class="label">Cannibalization</div>
+              <template x-for="c in audit.report.cannibalization">
+                <div class="text-xs px-3 py-2 border border-danger/30 rounded">
+                  <div class="text-danger" x-text="c.query"></div>
+                  <div class="text-muted" x-text="c.recommendation"></div>
+                </div>
+              </template>
+            </div>
+          </div>
+        </template>
+      </div>
+
+      <!-- Step 5: Plan -->
+      <div class="bg-panel border border-border rounded-xl p-5 space-y-3">
+        <h3 class="font-medium text-white">5 · Content plan</h3>
+        <div class="grid grid-cols-3 gap-3">
+          <div class="col-span-2"><label class="label">Timeframe</label><input x-model="audit.planTimeframe" class="field"></div>
+          <div><label class="label">Max items</label><input x-model.number="audit.planMaxItems" type="number" class="field"></div>
+        </div>
+        <button @click="runPlan()" :disabled="audit.loadingPlan || !audit.report" class="btn-primary w-full">
+          <span x-show="!audit.loadingPlan">Generate plan</span>
+          <span x-show="audit.loadingPlan">Planning...</span>
+        </button>
+      </div>
+
+      <!-- Step 6: Execute -->
+      <div class="bg-panel border border-border rounded-xl p-5 space-y-3">
+        <div class="flex items-center justify-between">
+          <h3 class="font-medium text-white">6 · Execute plan</h3>
+          <button @click="loadPlans()" class="btn-ghost text-xs">Refresh</button>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div class="md:col-span-1 space-y-1 max-h-96 overflow-y-auto">
+            <template x-if="!audit.plans.length"><div class="text-muted text-sm">Chưa có plan nào.</div></template>
+            <template x-for="p in audit.plans" :key="p.id">
+              <button @click="openPlan(p.id)"
+                      :class="audit.selectedPlan?.id === p.id ? 'bg-panel2' : 'hover:bg-panel2/60'"
+                      class="w-full text-left p-2 rounded text-xs">
+                <div class="text-white" x-text="p.site || 'untitled'"></div>
+                <div class="text-muted" x-text="`${p.timeframe} · ${p.item_count} items · ${new Date(p.created_at).toLocaleDateString()}`"></div>
+              </button>
+            </template>
+          </div>
+          <div class="md:col-span-2">
+            <template x-if="!audit.selectedPlan"><div class="text-muted text-sm">Chọn plan để execute.</div></template>
+            <template x-if="audit.selectedPlan">
+              <div class="space-y-2">
+                <div class="flex items-center gap-2">
+                  <label class="flex items-center gap-1 text-xs"><input type="checkbox" x-model="audit.autoPublish"> Auto-publish</label>
+                  <select x-show="audit.autoPublish" x-model="audit.publishStatus" class="field w-28 text-xs">
+                    <option value="draft">Draft</option>
+                    <option value="publish">Publish</option>
+                  </select>
+                </div>
+                <template x-for="(item, idx) in audit.selectedPlan.items" :key="idx">
+                  <div class="border border-border rounded p-3 text-xs space-y-1">
+                    <div class="flex items-center gap-2">
+                      <span class="px-1.5 py-0.5 rounded text-[10px]"
+                            :class="item.priority<=2 ? 'bg-accent/10 text-accent' : 'bg-panel2 text-muted'"
+                            x-text="'P' + item.priority"></span>
+                      <span class="text-muted text-[10px] uppercase" x-text="item.action"></span>
+                      <span class="text-white flex-1 truncate" x-text="item.title"></span>
+                    </div>
+                    <div class="text-muted">
+                      <span class="text-accent" x-text="item.primary_keyword"></span> ·
+                      <span x-text="item.word_count + 'w'"></span> ·
+                      <span x-text="item.expected_impact"></span>
+                    </div>
+                    <div class="text-muted" x-text="item.brief"></div>
+                    <div class="flex items-center gap-2 pt-1">
+                      <button @click="executePlanItem(idx)"
+                              :disabled="audit.executing[idx] || audit.selectedPlan.statuses?.[idx]?.status === 'published'"
+                              class="btn-secondary text-xs">
+                        <span x-show="!audit.executing[idx]">Generate & publish</span>
+                        <span x-show="audit.executing[idx]">Running...</span>
+                      </button>
+                      <span class="text-[11px]"
+                            :class="audit.selectedPlan.statuses?.[idx]?.status === 'published' ? 'text-accent' : audit.selectedPlan.statuses?.[idx]?.status === 'failed' ? 'text-danger' : 'text-muted'"
+                            x-text="audit.selectedPlan.statuses?.[idx]?.status || 'pending'"></span>
+                      <a x-show="audit.selectedPlan.statuses?.[idx]?.published_url"
+                         :href="audit.selectedPlan.statuses?.[idx]?.published_url" target="_blank"
+                         class="text-accent2 underline ml-auto">view</a>
+                    </div>
+                    <div x-show="audit.executeStatus[idx]" class="text-[11px]" x-text="audit.executeStatus[idx]"></div>
+                  </div>
+                </template>
+              </div>
+            </template>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 7: Ranking tracker -->
+      <div class="bg-panel border border-border rounded-xl p-5 space-y-3">
+        <h3 class="font-medium text-white">7 · Ranking tracker</h3>
+        <textarea x-model="audit.rankingKeywords" rows="3" class="field font-mono text-xs" placeholder="Một keyword / dòng. Để trống = lấy top 200 queries hiện tại."></textarea>
+        <button @click="rankingSnapshot()" :disabled="audit.loadingRanking" class="btn-secondary">
+          <span x-show="!audit.loadingRanking">Snapshot now</span>
+          <span x-show="audit.loadingRanking">Snapshotting...</span>
+        </button>
+        <template x-if="audit.rankingResult">
+          <div class="text-xs text-accent" x-text="`Saved ${audit.rankingResult.saved} rows`"></div>
+        </template>
+        <p class="text-xs text-muted">Để track định kỳ, gọi endpoint này qua Railway cron / n8n / Zapier.</p>
+      </div>
+    </section>
+
     <!-- History tab -->
     <section x-show="tab === 'history'" class="space-y-6">
       <header class="flex items-center justify-between">
@@ -576,6 +801,26 @@
           <div><label class="label">Consumer secret</label><input x-model="settings.woocommerce.consumer_secret" type="password" class="field"></div>
         </div>
         <div x-show="settings.testResult.woocommerce" class="text-xs" :class="settings.testResult.woocommerce?.ok ? 'text-accent' : 'text-danger'" x-text="settings.testResult.woocommerce?.ok ? 'Connected' : settings.testResult.woocommerce?.error"></div>
+      </div>
+
+      <div class="bg-panel border border-border rounded-xl p-5 space-y-4">
+        <h3 class="font-medium text-white">Google Search Console</h3>
+        <div>
+          <label class="label">Property URL</label>
+          <input x-model="settings.gsc.site_url" class="field" placeholder="sc-domain:example.com hoặc https://example.com/">
+        </div>
+        <div>
+          <label class="label">Service account JSON</label>
+          <textarea x-model="settings.gsc.service_account_json" rows="4" class="field font-mono text-xs" placeholder='Paste JSON từ Google Cloud Console. Nhớ share property trong GSC cho client_email.'></textarea>
+        </div>
+      </div>
+
+      <div class="bg-panel border border-border rounded-xl p-5 space-y-4">
+        <h3 class="font-medium text-white">Ahrefs</h3>
+        <div>
+          <label class="label">API token</label>
+          <input x-model="settings.ahrefs.api_token" type="password" class="field" placeholder="Bearer token từ ahrefs.com/api">
+        </div>
       </div>
 
       <div class="flex gap-2">

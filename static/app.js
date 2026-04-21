@@ -6,6 +6,7 @@ function agentApp() {
       { id: 'seo',      label: 'SEO Article', icon: '✎' },
       { id: 'listing',  label: 'Listing',     icon: '✦' },
       { id: 'analyze',  label: 'Analysis',    icon: '∴' },
+      { id: 'audit',    label: 'Audit',       icon: '◎' },
       { id: 'history',  label: 'History',     icon: '☰' },
       { id: 'settings', label: 'Settings',    icon: '⚙' },
     ],
@@ -36,6 +37,39 @@ function agentApp() {
       publishOk: false,
     },
 
+    audit: {
+      step: 'crawl',  // crawl -> gsc -> ahrefs -> run -> plan -> execute
+      site: '',
+      posts: [],
+      loadingCrawl: false,
+      gscSite: '',
+      gscDays: 28,
+      gscQueries: [],
+      gscPages: [],
+      loadingGsc: false,
+      ahrefsTarget: '',
+      ahrefsCompetitors: '',
+      ahrefsCountry: 'us',
+      competitorKeywords: [],
+      organicCompetitors: [],
+      loadingAhrefs: false,
+      report: null,
+      loadingReport: false,
+      plan: null,
+      planTimeframe: 'next 30 days',
+      planMaxItems: 10,
+      loadingPlan: false,
+      plans: [],
+      selectedPlan: null,
+      executing: {},     // {item_index: bool}
+      executeStatus: {}, // {item_index: message}
+      autoPublish: true,
+      publishStatus: 'draft',
+      rankingKeywords: '',
+      rankingResult: null,
+      loadingRanking: false,
+    },
+
     listing: {
       platform: 'manual', product_id: null,
       current_title: '', current_description: '',
@@ -58,6 +92,8 @@ function agentApp() {
       shopify: { shop: '', access_token: '' },
       wordpress: { base_url: '', username: '', app_password: '' },
       woocommerce: { base_url: '', consumer_key: '', consumer_secret: '' },
+      gsc: { site_url: '', service_account_json: '' },
+      ahrefs: { api_token: '' },
       testResult: {},
       testingLLM: false,
       geminiModels: [],
@@ -67,7 +103,10 @@ function agentApp() {
     async init() {
       this.loadSettings();
       await this.refreshStatus();
-      this.$watch('tab', (t) => { if (t === 'history') this.loadHistory(); });
+      this.$watch('tab', (t) => {
+        if (t === 'history') this.loadHistory();
+        if (t === 'audit') this.loadPlans();
+      });
     },
 
     async refreshStatus() {
@@ -186,6 +225,160 @@ function agentApp() {
         this.seo.publishResult = `Published: ${r.link || r.id || 'ok'}`;
       } catch (e) { this.seo.publishResult = `Error: ${e.message}`; }
       finally { this.seo.publishing = false; }
+    },
+
+    // ---- Audit ----
+    async crawlSite() {
+      this.audit.loadingCrawl = true;
+      try {
+        const wp = this.settings.wordpress;
+        const useWP = this.audit.site === 'wordpress' || (!this.audit.site && wp.base_url);
+        const body = useWP
+          ? { source: 'wordpress', wp, limit: 100 }
+          : { source: 'sitemap', base_url: this.audit.site, limit: 100 };
+        const r = await this.postJSON('/api/audit/crawl', body);
+        this.audit.posts = r.posts || [];
+      } catch (e) { alert('Crawl failed: ' + e.message); }
+      finally { this.audit.loadingCrawl = false; }
+    },
+
+    async loadGSC() {
+      this.audit.loadingGsc = true;
+      try {
+        const saJson = this.settings.gsc.service_account_json;
+        if (!saJson) { alert('Cần service account JSON trong Settings'); return; }
+        const body = {
+          site_url: this.audit.gscSite || this.settings.gsc.site_url,
+          service_account_json: JSON.parse(saJson),
+          days: this.audit.gscDays,
+          row_limit: 500,
+        };
+        const qData = await this.postJSON('/api/audit/gsc/query', { ...body, dimensions: ['query'] });
+        this.audit.gscQueries = qData.rows || [];
+        const pData = await this.postJSON('/api/audit/gsc/query', { ...body, dimensions: ['page'] });
+        this.audit.gscPages = pData.rows || [];
+      } catch (e) { alert('GSC error: ' + e.message); }
+      finally { this.audit.loadingGsc = false; }
+    },
+
+    async loadAhrefs() {
+      const tok = this.settings.ahrefs.api_token;
+      if (!tok) { alert('Cần Ahrefs API token trong Settings'); return; }
+      this.audit.loadingAhrefs = true;
+      try {
+        const target = this.audit.ahrefsTarget;
+        const country = this.audit.ahrefsCountry || 'us';
+        const compResp = await this.postJSON('/api/audit/ahrefs/competitors', {
+          api_token: tok, target, country, limit: 10,
+        });
+        this.audit.organicCompetitors = compResp.competitors || [];
+        const compList = this.audit.ahrefsCompetitors
+          .split(',').map(s => s.trim()).filter(Boolean);
+        if (target && compList.length) {
+          const gap = await this.postJSON('/api/audit/ahrefs/content-gap', {
+            api_token: tok, target, competitors: compList, country, limit: 100,
+          });
+          this.audit.competitorKeywords = gap.keywords || [];
+        }
+      } catch (e) { alert('Ahrefs error: ' + e.message); }
+      finally { this.audit.loadingAhrefs = false; }
+    },
+
+    async runAudit() {
+      this.audit.loadingReport = true; this.audit.report = null;
+      try {
+        this.audit.report = await this.postJSON('/api/audit/run', {
+          blog_posts: this.audit.posts,
+          gsc_queries: this.audit.gscQueries,
+          gsc_pages: this.audit.gscPages,
+          competitor_keywords: this.audit.competitorKeywords,
+          competitors: this.audit.organicCompetitors,
+          llm: this.llmPayload(),
+        });
+      } catch (e) { alert('Audit error: ' + e.message); }
+      finally { this.audit.loadingReport = false; }
+    },
+
+    async runPlan() {
+      if (!this.audit.report) { alert('Chạy audit trước'); return; }
+      this.audit.loadingPlan = true;
+      try {
+        const r = await this.postJSON('/api/audit/plan', {
+          audit: this.audit.report,
+          timeframe: this.audit.planTimeframe,
+          inventory_urls: this.audit.posts.map(p => p.url).filter(Boolean),
+          max_items: this.audit.planMaxItems,
+          site: this.audit.gscSite || this.audit.ahrefsTarget,
+          save: true,
+          llm: this.llmPayload(),
+        });
+        this.audit.plan = r;
+        await this.loadPlans();
+      } catch (e) { alert('Plan error: ' + e.message); }
+      finally { this.audit.loadingPlan = false; }
+    },
+
+    async loadPlans() {
+      try {
+        const r = await fetch('/api/audit/plans');
+        this.audit.plans = (await r.json()).items || [];
+      } catch (e) {}
+    },
+
+    async openPlan(id) {
+      try {
+        const r = await fetch('/api/audit/plans/' + id);
+        this.audit.selectedPlan = await r.json();
+      } catch (e) {}
+    },
+
+    async executePlanItem(itemIndex) {
+      if (!this.audit.selectedPlan) return;
+      this.audit.executing = { ...this.audit.executing, [itemIndex]: true };
+      try {
+        const publish = this.audit.autoPublish
+          ? {
+              platform: 'wordpress',
+              status: this.audit.publishStatus,
+              creds: this.credsFor('wordpress'),
+            }
+          : null;
+        const body = {
+          plan_id: this.audit.selectedPlan.id,
+          item_index: itemIndex,
+          publish,
+          internal_links: { source: 'wordpress', creds: this.credsFor('wordpress'), limit: 5 },
+          llm: this.llmPayload(),
+        };
+        const r = await this.postJSON('/api/audit/plan/execute', body);
+        this.audit.executeStatus = {
+          ...this.audit.executeStatus,
+          [itemIndex]: `OK · ${r.result.published ? 'published to ' + r.result.published.url : 'saved as draft'}`,
+        };
+        await this.openPlan(this.audit.selectedPlan.id);
+      } catch (e) {
+        this.audit.executeStatus = { ...this.audit.executeStatus, [itemIndex]: 'Error: ' + e.message };
+      } finally {
+        this.audit.executing = { ...this.audit.executing, [itemIndex]: false };
+      }
+    },
+
+    async rankingSnapshot() {
+      const saJson = this.settings.gsc.service_account_json;
+      if (!saJson) { alert('Cần GSC service account JSON'); return; }
+      this.audit.loadingRanking = true;
+      try {
+        const kws = this.audit.rankingKeywords
+          .split('\n').map(s => s.trim()).filter(Boolean);
+        const r = await this.postJSON('/api/audit/ranking/snapshot', {
+          site: this.audit.gscSite || this.settings.gsc.site_url,
+          service_account_json: JSON.parse(saJson),
+          keywords: kws,
+          days: 7,
+        });
+        this.audit.rankingResult = r;
+      } catch (e) { alert('Ranking error: ' + e.message); }
+      finally { this.audit.loadingRanking = false; }
     },
 
     // ---- History ----
@@ -344,7 +537,9 @@ function agentApp() {
         shopify: { shop: '', access_token: '' },
         wordpress: { base_url: '', username: '', app_password: '' },
         woocommerce: { base_url: '', consumer_key: '', consumer_secret: '' },
-        testResult: {}, saved: false,
+        gsc: { site_url: '', service_account_json: '' },
+        ahrefs: { api_token: '' },
+        testResult: {}, testingLLM: false, geminiModels: [], saved: false,
       };
     },
     async listGeminiModels() {
